@@ -1,0 +1,13 @@
+# Core dependencies
+torch>=2.1.0
+transformers>=4.36.0
+tokenizers>=0.15.0
+safetensors>=0.4.0
+accelerate>=0.25.0
+
+# Evaluation
+lm-eval>=0.4.0
+
+# Optional: Flash Attention 2 (requires CUDA)
+# flash-attn>=2.5.0
+wandb

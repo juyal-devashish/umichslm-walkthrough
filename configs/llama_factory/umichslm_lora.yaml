@@ -1,0 +1,74 @@
+# UMichSLM LoRA Fine-Tuning Configuration
+# For use with LLaMA Factory (https://github.com/hiyouga/LLaMA-Factory)
+#
+# This configuration uses LoRA (Low-Rank Adaptation) for efficient fine-tuning.
+# LoRA significantly reduces memory requirements and training time.
+#
+# Usage:
+#   llamafactory-cli train configs/llama_factory/umichslm_lora.yaml
+
+### Model Configuration ###
+model_name_or_path: ./checkpoints/umichslm-base
+trust_remote_code: true
+
+### Data Configuration ###
+# Point to the directory containing dataset_info.json
+dataset_dir: ./configs/llama_factory  # Adjust path as needed
+
+dataset: alpaca_gpt4_en
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 8
+
+### Training Stage ###
+stage: sft
+do_train: true
+finetuning_type: lora  # Use LoRA
+
+### LoRA Configuration ###
+lora_rank: 8  # Rank of LoRA matrices
+lora_alpha: 16  # LoRA alpha (scaling factor)
+lora_dropout: 0.05  # Dropout for LoRA layers
+lora_target: q_proj,v_proj,k_proj,o_proj,gate_proj,up_proj,down_proj  # Target modules
+
+# Additional LoRA options
+# use_rslora: true  # Use Rank-Stabilized LoRA
+# use_dora: true  # Use DoRA (Weight-Decomposed LoRA)
+
+### Output Configuration ###
+output_dir: ./outputs/umichslm-lora
+logging_dir: ./logs/umichslm-lora
+overwrite_output_dir: true
+
+### Training Hyperparameters ###
+per_device_train_batch_size: 8  # Can use larger batch with LoRA
+per_device_eval_batch_size: 8
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-4  # Higher LR for LoRA
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+### Optimization ###
+bf16: true
+gradient_checkpointing: true
+flash_attn: fa2
+optim: adamw_torch
+
+### Logging and Saving ###
+logging_steps: 10
+save_steps: 500
+eval_steps: 500
+save_total_limit: 3
+report_to: tensorboard
+
+### Evaluation ###
+do_eval: true
+evaluation_strategy: steps
+load_best_model_at_end: true
+
+### Misc ###
+seed: 42
+dataloader_num_workers: 4

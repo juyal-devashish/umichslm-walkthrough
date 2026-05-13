@@ -1,0 +1,67 @@
+# Canonical Great Lakes workflow for UMichSLM SFT.
+#
+# Render only:
+#   python scripts/generate_sft_slurm.py --config configs/slurm/sft_greatlakes.yaml
+#
+# Submit after reviewing:
+#   sbatch generated-slurm/sft/sft_workflow.sh
+
+output_dir: generated-slurm/sft
+script_name: sft_workflow.sh
+generated_config_dir: generated-slurm/sft-configs
+project_dir: "$HOME/umich-slm"
+
+# Secrets are passed through from the submit environment, not stored in git.
+# Before submitting, run: export WANDB_API_KEY=...
+required_env: [WANDB_API_KEY]
+
+slurm:
+  job_name: sft-umichslm
+  partition: gpu-rtx6000
+  time: "8:00:00"
+  account: cse598s004w26_class
+  nodes: 1
+  ntasks_per_node: 1
+  cpus_per_task: 4
+  mem_per_cpu: 16G
+  gpus: 1
+  log_dir: /home/%u/umich-slm/slurm-logs
+  # Use either conda_env_name or conda_env_path.
+  conda_env_name: umich-slm
+  # conda_env_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/envs/umich-slm
+  modules: [cuda/12.1, gcc/11]
+  mail_type: END,FAIL
+
+env:
+  SCRATCH: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data
+  HF_HOME: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface
+  HF_HUB_CACHE: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface
+  TOKENIZERS_PARALLELISM: "false"
+  DISABLE_VERSION_CHECK: "1"
+  WANDB_PROJECT: umichslm-sft
+  WANDB_ENTITY: umich-slm
+
+outputs:
+  root: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/sft
+  run_prefix: umichslm-sft
+
+wandb:
+  project: umichslm-sft
+  entity: umich-slm
+
+sft:
+  dataset: umichslm_sft_train
+  eval_dataset: umichslm_sft_val
+  base_config: configs/llama_factory/umichslm_sft.yaml
+  model_name_or_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-base-6tok
+  learning_rate: 2.0e-5
+  num_train_epochs: 3.0
+  per_device_train_batch_size: 16
+  gradient_accumulation_steps: 2
+  save_steps: 500
+  eval_steps: 500
+  logging_steps: 20
+
+# Default array job: three LR candidates for the same model/data config.
+sweep:
+  learning_rate: [1.0e-5, 2.0e-5, 5.0e-5]

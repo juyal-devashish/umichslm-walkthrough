@@ -1,0 +1,70 @@
+# Canonical Great Lakes workflow for UMichSLM pretraining.
+#
+# Render only:
+#   python scripts/generate_pretrain_slurm.py --config configs/slurm/pretrain_greatlakes.yaml
+#
+# Submit after reviewing:
+#   sbatch generated-slurm/pretrain/pretrain_workflow.sh
+
+output_dir: generated-slurm/pretrain
+script_name: pretrain_workflow.sh
+project_dir: "$HOME/umich-slm"
+
+# Secrets are passed through from the submit environment, not stored in git.
+# Before submitting, run: export WANDB_API_KEY=...
+required_env: [WANDB_API_KEY]
+
+slurm:
+  job_name: pretrain-umichslm
+  partition: gpu-rtx6000
+  time: "8:00:00"
+  account: cse598s004w26_class
+  nodes: 1
+  ntasks_per_node: 1
+  cpus_per_task: 4
+  mem: 64G
+  gpus: 1
+  log_dir: /home/%u/umich-slm/slurm-logs
+  # Use either conda_env_name or conda_env_path.
+  conda_env_name: umich-slm
+  # conda_env_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/envs/umich-slm
+  modules: [cuda/12.1, gcc/11]
+  mail_type: END,FAIL
+
+env:
+  SCRATCH: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data
+  HF_HOME: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface
+  HF_HUB_CACHE: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface
+  TOKENIZERS_PARALLELISM: "false"
+  DISABLE_VERSION_CHECK: "1"
+
+data:
+  dataset: mix_code10_math5_math_reasoning5_textbook20_web60_train_1000M
+  dataset_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/1B
+  eval_dataset: mix_code10_math5_math_reasoning5_textbook20_web60_val_30M
+  do_eval: true
+
+outputs:
+  root: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/pre-train
+  run_prefix: toy1b
+
+wandb:
+  project: umich-slm
+  entity: umich-slm
+
+training:
+  size: qwen3_like_small
+  target_tokens_b: 1.0
+  batch_size: 16
+  gradient_accumulation_steps: 8
+  learning_rate: 3.0e-4
+  cutoff_len: 2048
+  save_steps: 200
+  eval_steps: 200
+  logging_steps: 50
+
+# Uncomment to render an array job. The generator expands the Cartesian product.
+# sweep:
+#   size: [qwen3_like_tiny, qwen3_like_xsmall, qwen3_like_small]
+#   target_tokens_b: [0.02, 0.04]
+#   learning_rate: [3.0e-4]

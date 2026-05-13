@@ -1,0 +1,45 @@
+# SLURM configuration for UMich Great Lakes HPC cluster
+#
+# Usage:
+#   python scripts/scaling_laws.py generate \
+#       --models qwen3_5_like_tiny,qwen3_5_like_xsmall,qwen3_5_like_small \
+#       --tokens 20,40,200 \
+#       --output_dir ./scaling_experiments \
+#       --slurm_config configs/slurm/greatlakes.yaml
+#
+# Notes:
+#   - Partition gpu-rtx6000 provides RTX 6000 (24 GB VRAM) GPUs
+#   - Time limit of 3h covers tiny/xsmall up to 200M tokens comfortably
+#   - For 1B token runs or small-scale models bump time to 8:00:00
+#   - WandB entity/project are shared across the team
+#   - Never write checkpoints to home directory (quota ~80 GB)
+
+partition: gpu-rtx6000
+time: "3:00:00"
+gres: "gpu:1"
+nodes: 1
+ntasks_per_node: 1
+cpus_per_task: 4
+mem: "64G"
+
+# Class account
+account: cse598s004w26_class
+
+output_dir: "/home/%u/umich-slm/slurm-logs"
+output_pattern: "scale-%j.out"
+
+conda_env: umich-slm
+
+env_vars:
+  HF_HOME: "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface"
+  HF_HUB_CACHE: "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface"
+  DISABLE_VERSION_CHECK: "1"
+  TOKENIZERS_PARALLELISM: "false"
+  WANDB_PROJECT: "scaling-experiment"
+  WANDB_ENTITY: "umich-slm"
+
+dataset: fineweb_edu_1B_train
+dataset_dir: "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets"
+eval_dataset: fineweb_edu_1B_val
+
+models_output_dir: "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results"

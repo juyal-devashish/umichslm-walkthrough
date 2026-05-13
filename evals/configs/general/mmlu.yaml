@@ -1,0 +1,17 @@
+# MMLU — Massive Multitask Language Understanding
+# 57 subjects spanning STEM, humanities, social sciences, and other
+# Standard: 5-shot
+#
+# Usage:
+#   lm_eval --model hf --model_args pretrained=<model> \
+#           --tasks umichslm_mmlu --include_path evals/configs/general
+
+group: umichslm_mmlu
+task:
+  - mmlu
+num_fewshot: 5
+metadata:
+  version: 2
+  benchmark: MMLU
+  fewshot: 5
+  notes: "Weighted average across all 57 subjects"

@@ -1,0 +1,201 @@
+{
+  "stage_index": 3,
+  "attention_mode": "swa_globals_mla",
+  "block_specs": [
+    {
+      "source": 0,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 0,
+      "is_inserted": true,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 1,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 1,
+      "is_inserted": true,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 2,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 2,
+      "is_inserted": true,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 3,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 3,
+      "is_inserted": true,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 4,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 4,
+      "is_inserted": true,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 5,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 5,
+      "is_inserted": true,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 6,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 6,
+      "is_inserted": true,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 7,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": 7,
+      "is_inserted": true,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    }
+  ],
+  "parent_stage_index": 2,
+  "parent_checkpoint": null,
+  "init_strategy": "exact_copy"
+}

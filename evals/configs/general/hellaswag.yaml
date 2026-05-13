@@ -1,0 +1,16 @@
+# HellaSwag — Commonsense NLI / sentence completion
+# Tests commonsense reasoning via activity description completion
+# Standard: 10-shot
+#
+# Usage:
+#   lm_eval --model hf --model_args pretrained=<model> \
+#           --tasks umichslm_hellaswag --include_path evals/configs/general
+
+group: umichslm_hellaswag
+task:
+  - hellaswag
+num_fewshot: 10
+metadata:
+  benchmark: HellaSwag
+  fewshot: 10
+  notes: "acc_norm is the primary reported metric"

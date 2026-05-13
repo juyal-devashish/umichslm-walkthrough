@@ -1,0 +1,17 @@
+# TruthfulQA — MC2 variant (multi-true multiple choice)
+# Tests whether models generate truthful answers vs. common misconceptions
+# Standard: 0-shot (no few-shot examples; question style is self-contained)
+#
+# Usage:
+#   lm_eval --model hf --model_args pretrained=<model> \
+#           --tasks umichslm_truthfulqa --include_path evals/configs/general
+
+group: umichslm_truthfulqa
+task:
+  - truthfulqa_mc2
+num_fewshot: 0
+metadata:
+  benchmark: TruthfulQA
+  variant: mc2
+  fewshot: 0
+  notes: "mc2 scores probability mass on all correct answers; higher = more truthful"

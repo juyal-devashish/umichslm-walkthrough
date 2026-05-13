@@ -1,0 +1,62 @@
+# UMichSLM GRPO on verifiable math rewards (GSM8K / MATH).
+# Loaded by scripts/run_grpo.py; all values can be overridden via CLI flags.
+#
+# Single run:
+#   python scripts/run_grpo.py \
+#       --model_path <SFT_WINNER_DIR> \
+#       --train_data /scratch/.../grpo_data/v1/gsm8k/train.jsonl \
+#       --val_data   /scratch/.../grpo_data/v1/gsm8k/val.jsonl \
+#       --output_dir /scratch/.../umichslm-grpo-default
+#
+# Sweep: see local-slurm/grpo_sweep.sh
+
+### Model ###
+model_name_or_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/PLACEHOLDER_SFT_WINNER
+trust_remote_code: true
+
+### Data ###
+train_data: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/grpo_data/v1/gsm8k/train.jsonl
+val_data:   /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/grpo_data/v1/gsm8k/val.jsonl
+
+### Output ###
+output_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-grpo-default
+
+### GRPO hyperparameters ###
+# num_generations (G): completions sampled per prompt per update step.
+# Higher G → lower variance gradient estimates but more GPU memory.
+# On a single RTX 6000 (24 GB) with a 100M model, G=8 is feasible.
+num_generations: 8
+temperature: 1.0        # keep at 1.0 to preserve output diversity
+max_new_tokens: 512     # max tokens per generated completion
+max_prompt_length: 512  # prompts longer than this are truncated
+
+# Policy gradient parameters (GRPO paper defaults)
+beta: 0.001             # KL penalty — GRPO uses a much smaller beta than PPO
+epsilon: 0.2            # PPO-style importance-ratio clipping
+
+### Training hyperparameters ###
+# Per-device batch = 1 because each forward pass generates G completions.
+# Effective prompt throughput = grad_accum × num_gpus = 8 prompts/step.
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-6   # RL fine-tuning is LR-sensitive; start here
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+max_grad_norm: 1.0
+
+### Optimisation ###
+bf16: true
+gradient_checkpointing: true
+optim: adamw_torch
+
+### Logging and saving ###
+logging_steps: 10
+save_steps: 200
+eval_steps: 200
+save_total_limit: 3
+report_to: wandb
+
+### Misc ###
+seed: 42
+dataloader_num_workers: 4

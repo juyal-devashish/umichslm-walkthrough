@@ -1,0 +1,81 @@
+# UMichSLM DPO on UltraFeedback binarized (Task 8).
+# For use with LLaMA Factory. Does NOT overwrite the original umichslm_dpo.yaml.
+#
+# Usage (single run):
+#   llamafactory-cli train configs/llama_factory/umichslm_dpo_80k.yaml \
+#       model_name_or_path=<SFT_WINNER_DIR> \
+#       ref_model=<SFT_WINNER_DIR> \
+#       dpo_beta=0.1 \
+#       output_dir=/scratch/.../umichslm-dpo-beta0.1
+#
+# Usage (β sweep): see local-slurm/dpo_beta_sweep.sh
+
+### Model Configuration ###
+# Pass via CLI: the best SFT LR checkpoint from the LR sweep.
+model_name_or_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/PLACEHOLDER_SFT_WINNER
+trust_remote_code: true
+
+### Reference Model ###
+ref_model: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/PLACEHOLDER_SFT_WINNER
+
+### Data Configuration ###
+dataset_dir: ./configs/llama_factory
+dataset: umichslm_dpo_train
+eval_dataset: umichslm_dpo_val
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 8
+
+### Training Stage ###
+stage: dpo
+do_train: true
+finetuning_type: full
+
+### DPO Hyperparameters ###
+dpo_beta: 0.1            # CLI override per-run for sweep
+dpo_loss: sigmoid
+dpo_ftx: 0.0
+
+### Output Configuration ###
+output_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-dpo-default
+logging_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-dpo-default/tb
+overwrite_output_dir: true
+
+### Training Hyperparameters ###
+# RTX 6000 (24 GB). DPO keeps both policy and ref model in memory; use smaller
+# per-device batch than SFT.
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-7     # standard DPO LR (Zephyr / HF alignment handbook)
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+### Optimization ###
+bf16: true
+gradient_checkpointing: true
+flash_attn: fa2
+optim: adamw_torch
+
+### Logging and Saving ###
+logging_steps: 20
+save_steps: 200
+eval_steps: 200
+save_total_limit: 3
+report_to: wandb
+run_name: umichslm-dpo
+
+### Evaluation ###
+do_eval: true
+evaluation_strategy: steps
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+greater_is_better: false
+
+### Misc ###
+seed: 42
+dataloader_num_workers: 4
+ddp_timeout: 180000000

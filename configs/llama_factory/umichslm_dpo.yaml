@@ -1,0 +1,70 @@
+# UMichSLM Direct Preference Optimization (DPO) Configuration
+# For use with LLaMA Factory (https://github.com/hiyouga/LLaMA-Factory)
+#
+# Usage:
+#   1. First run SFT to get a supervised model
+#   2. Run: llamafactory-cli train configs/llama_factory/umichslm_dpo.yaml
+
+### Model Configuration ###
+model_name_or_path: ./outputs/umichslm-sft  # Path to SFT model
+trust_remote_code: true
+
+### Reference Model (for DPO) ###
+ref_model: ./outputs/umichslm-sft  # Reference model path (same as initial for DPO)
+
+### Data Configuration ###
+# Point to the directory containing dataset_info.json
+dataset_dir: ./configs/llama_factory  # Adjust path as needed
+
+dataset: dpo_en_demo  # DPO dataset with chosen/rejected pairs
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 8
+
+### Training Stage ###
+stage: dpo  # Direct Preference Optimization
+do_train: true
+finetuning_type: full
+
+### DPO Hyperparameters ###
+dpo_beta: 0.1  # Temperature parameter for DPO
+dpo_loss: sigmoid  # Options: sigmoid, hinge, ipo, kto_pair
+dpo_ftx: 0.0  # Coefficient for SFT loss in DPO
+
+### Output Configuration ###
+output_dir: ./outputs/umichslm-dpo
+logging_dir: ./logs/umichslm-dpo
+overwrite_output_dir: true
+
+### Training Hyperparameters ###
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-6
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+### Optimization ###
+bf16: true
+gradient_checkpointing: true
+flash_attn: fa2
+optim: adamw_torch
+
+### Logging and Saving ###
+logging_steps: 10
+save_steps: 200
+eval_steps: 200
+save_total_limit: 3
+report_to: tensorboard
+
+### Evaluation ###
+do_eval: true
+evaluation_strategy: steps
+load_best_model_at_end: true
+
+### Misc ###
+seed: 42
+dataloader_num_workers: 4

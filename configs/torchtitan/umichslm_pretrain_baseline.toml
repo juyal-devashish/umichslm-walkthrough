@@ -1,0 +1,75 @@
+# UMichSLM baseline GQA pretraining config (torchtitan path).
+#
+# Mirrors configs/llama_factory/umichslm_pretrain.yaml so the two paths can be
+# benchmarked head-to-head. Single-node DDP only — set
+# parallelism.dp_replicate_degree implicitly via WORLD_SIZE under torchrun.
+#
+# Phase 1 target: 1 GPU pilot. Bump per_device_batch_size and reduce
+# gradient_accumulation_steps once you scale to 2-8 GPUs.
+
+[job]
+output_dir = "./outputs/titan/small_baseline_lr3e4"
+run_name = "titan_small_baseline_lr3e4"
+seed = 42
+
+[model]
+size = "qwen3_like_small"
+# Optional: load weights from a fresh-init bootstrap checkpoint to match the
+# LLaMA-Factory recipe exactly. If null, a random-init model is used.
+# init_from = "./outputs/bootstrap/models/toy1b_qwen3_like_small_init"
+overrides = { num_key_value_heads = 4 }
+
+[data]
+# Either point at the FineWeb-1B prep dir...
+dataset_dir = "/shared/4/projects/umich-slm/data/fineweb-edu-1B"
+train_arrow = "dataset/train.arrow"
+val_arrow   = "dataset/validation.arrow"
+text_column = "text"
+seq_len = 2048
+num_workers = 8
+# Tokenizer: defaults to model.init_from. Override here if init_from is null.
+# tokenizer_path = "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface/hub/models--HuggingFaceTB--SmolLM2-1.7B-Instruct/snapshots/31b70e2e869a7173562077fd711b654946d38674"
+
+[optimizer]
+name = "adamw"            # adamw | adamw_fused
+lr = 3.0e-4
+weight_decay = 0.1
+betas = [0.9, 0.95]
+eps = 1.0e-8
+
+[lr_scheduler]
+# Mirrors LLaMA Factory's WSD schedule (warmup 5% of 3814 = 191; stable 3242;
+# decay 381; cosine decay to 0).
+name = "warmup_stable_decay"
+warmup_steps = 191
+stable_steps = 3242
+decay_steps  = 381
+min_lr_ratio = 0.0
+decay_type   = "cosine"
+
+[training]
+per_device_batch_size = 8
+gradient_accumulation_steps = 16
+max_steps = 3814
+max_grad_norm = 1.0
+bf16 = true
+gradient_checkpointing = true
+torch_compile = false
+float8 = false
+deltanet_compile_safe = true
+
+[parallelism]
+dp_replicate_degree = 1   # informational only; actual world size from torchrun
+
+[logging]
+log_every = 50
+report_to = "wandb"       # wandb | none
+wandb_project = "umich-slm-titan"
+wandb_tags = ["benchmark_v1", "baseline"]
+metrics_jsonl = "metrics.jsonl"
+
+[checkpoint]
+save_every = 500
+keep_last = 5
+format = "hf"
+eval_every = 1000

@@ -1,0 +1,57 @@
+{
+  "stage_index": 1,
+  "attention_mode": "swa_globals_mla",
+  "block_specs": [
+    {
+      "source": null,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": null,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": null,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    },
+    {
+      "source": null,
+      "is_inserted": false,
+      "block_layout": [
+        "swa",
+        "swa",
+        "swa",
+        "mla"
+      ],
+      "fresh_router": true,
+      "router_perturb_std": 0.005
+    }
+  ],
+  "parent_stage_index": null,
+  "parent_checkpoint": null,
+  "init_strategy": "exact_copy"
+}

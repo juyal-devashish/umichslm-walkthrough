@@ -1,0 +1,95 @@
+# UMichSLM pretraining config for LLaMA Factory.
+# This version targets the shared 1B toy mixture dataset for scaling/pretraining runs.
+#
+# Typical usage:
+#   1. Create an initialized model checkpoint:
+#      python scripts/pretrain.py --size qwen3_like_small --dry_run --output_dir ./outputs/bootstrap --run_name toy1b_qwen3_like_small_init --tokenizer_path /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface/hub/models--HuggingFaceTB--SmolLM2-1.7B-Instruct/snapshots/31b70e2e869a7173562077fd711b654946d38674
+#   2. Train:
+#      llamafactory-cli train configs/llama_factory/umichslm_pretrain.yaml
+
+### Model Configuration ###
+# This should be a fresh initialized checkpoint, not an already-trained model.
+# The bootstrap checkpoint is expected to bundle the cached SmolLM2 tokenizer above.
+
+# This should be the path to the checkpoint from the pre-pretraining on structural learning task like Shuffle-Dyck-k
+model_name_or_path: ./outputs/umichslm-prepretrain/checkpoint-500
+trust_remote_code: true
+
+### Data Configuration ###
+# Where dataset_info.json lives
+dataset_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/200M
+dataset: mix_code10_math5_math_reasoning5_textbook20_web60_train_200M
+cutoff_len: 2048
+preprocessing_num_workers: 16
+max_samples: 488000
+
+### Training Stage ###
+stage: pt  # Pretraining (next-token prediction)
+do_train: true
+finetuning_type: full
+
+### Output Configuration ###
+output_dir: ./outputs/umichslm-pretrain
+logging_dir: ./outputs/umichslm-pretrain/logs
+overwrite_output_dir: false
+run_name: umichslm_pretrain_toy_200M_shuffle_dyck_k
+
+### Training Hyperparameters ###
+per_device_train_batch_size: 8
+per_device_eval_batch_size: 8
+gradient_accumulation_steps: 16  # Effective batch size = 8 * 16 * num_gpus
+learning_rate: 3.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+weight_decay: 0.1
+max_grad_norm: 1.0
+
+# For a 1B-token style run, set this from your token budget calculation.
+# Adjust after you decide GPU count / global batch.
+# max_steps: 3700
+
+### Optimization ###
+bf16: true
+gradient_checkpointing: true
+flash_attn: fa2
+optim: adamw_torch
+
+# For multi-GPU training with fused optimizer:
+# optim: adamw_torch_fused
+
+### Logging and Saving ###
+logging_steps: 10
+# Required by scripts/throughput_compare.py to pull tokens/sec out of
+# trainer_state.json for the head-to-head LF-vs-torchtitan comparison.
+include_tokens_per_second: true
+include_num_input_tokens_seen: true
+save_steps: 1000
+eval_steps: 500
+save_total_limit: 1
+
+report_to: wandb
+# Set WANDB_PROJECT / WANDB_ENTITY in the environment instead of adding
+# unsupported keys here. Recent LLaMA Factory versions pass this config
+# through HfArgumentParser, which rejects unknown YAML fields.
+
+### Evaluation ###
+do_eval: true
+eval_dataset: mix_code10_math5_math_reasoning5_textbook20_web60_val_6M
+eval_strategy: steps
+
+### Distributed Training ###
+# For multi-GPU training with DeepSpeed:
+# deepspeed: configs/llama_factory/ds_config_zero2.json
+# ddp_find_unused_parameters: false
+
+# Note: If you get "ModuleNotFoundError: No module named 'ray.train'",
+# you can either:
+# 1. Install Ray: pip install "ray[train,torch]"
+# 2. Or use single-GPU training (Ray is not required)
+# 3. Or use DeepSpeed for multi-GPU (see above)
+
+### Misc ###
+seed: 42
+dataloader_num_workers: 8
+dataloader_pin_memory: true

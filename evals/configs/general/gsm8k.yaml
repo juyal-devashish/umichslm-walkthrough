@@ -1,0 +1,16 @@
+# GSM8K — Grade School Math
+# 8.5K grade-school math word problems requiring multi-step reasoning
+# Standard: 4-shot (chain-of-thought)
+#
+# Usage:
+#   lm_eval --model hf --model_args pretrained=<model> \
+#           --tasks umichslm_gsm8k --include_path evals/configs/general
+
+group: umichslm_gsm8k
+task:
+  - gsm8k
+num_fewshot: 4
+metadata:
+  benchmark: GSM8K
+  fewshot: 4
+  notes: "Uses flexible-extract filter for final numeric answer; exact_match is primary metric"

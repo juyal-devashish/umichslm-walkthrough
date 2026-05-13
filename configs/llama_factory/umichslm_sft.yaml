@@ -1,0 +1,70 @@
+# UMichSLM Single-Stage SFT on the 80k 6-token mix.
+# For use with LLaMA Factory (https://github.com/hiyouga/LLaMA-Factory)
+#
+# Usage (single run):
+#   llamafactory-cli train configs/llama_factory/umichslm_sft.yaml \
+#       learning_rate=2e-5 output_dir=/scratch/.../sft_lr2e-5
+#
+# Usage (LR sweep): see local-slurm/sft_lr_sweep.sh
+
+### Model Configuration ###
+# Must be the 6-token-extended base (run scripts/sft_data/extend_tokenizer.py first).
+model_name_or_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-base-6tok
+trust_remote_code: true
+
+### Data Configuration ###
+dataset_dir: ./configs/llama_factory
+dataset: umichslm_sft_train
+eval_dataset: umichslm_sft_val
+template: default
+cutoff_len: 2048
+preprocessing_num_workers: 8
+
+### Training Stage ###
+stage: sft
+do_train: true
+finetuning_type: full
+
+### Output Configuration ###
+# Override via CLI per-run to avoid clobber during LR sweep.
+output_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-sft-default
+logging_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-sft-default/tb
+overwrite_output_dir: true
+
+### Training Hyperparameters ###
+# RTX 6000 (24 GB) with 101M model: micro-batch 16, grad-accum 2 -> effective 32.
+per_device_train_batch_size: 16
+per_device_eval_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 2.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+### Optimization ###
+bf16: true
+gradient_checkpointing: true
+flash_attn: fa2
+optim: adamw_torch
+
+### Logging and Saving ###
+logging_steps: 20
+save_steps: 500
+eval_steps: 500
+save_total_limit: 3
+report_to: wandb
+run_name: umichslm-sft
+
+### Evaluation ###
+do_eval: true
+evaluation_strategy: steps
+load_best_model_at_end: true
+metric_for_best_model: eval_loss
+greater_is_better: false
+
+### Misc ###
+seed: 42
+dataloader_num_workers: 4
+ddp_timeout: 180000000

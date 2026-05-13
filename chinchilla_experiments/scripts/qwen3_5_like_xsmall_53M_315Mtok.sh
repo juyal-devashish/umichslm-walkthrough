@@ -1,0 +1,74 @@
+#!/bin/bash
+#SBATCH --job-name=scale-qwen3_5_like_xsmall_53M_315Mtok
+#SBATCH --output=/home/%u/umich-slm/slurm-logs/qwen3_5_like_xsmall_53M_315Mtok-%j.out
+#SBATCH --error=/home/%u/umich-slm/slurm-logs/qwen3_5_like_xsmall_53M_315Mtok-%j.err
+#SBATCH --partition=spgpu
+#SBATCH --time=24:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=4
+#SBATCH --gpus=1
+#SBATCH --mem=64G
+#SBATCH --account=cse598s004w26_class
+#SBATCH --mail-user=vnagpal@umich.edu
+#SBATCH --mail-type=END,FAIL
+# Scaling Law Experiment: qwen3_5_like_xsmall_53M_315Mtok
+# Model: qwen3_5_like_xsmall (53.0M params)
+# Training tokens: 315M
+# Estimated FLOPs: 1.00e+17
+
+echo "========================================"
+echo "Experiment: qwen3_5_like_xsmall_53M_315Mtok"
+echo "Model:      qwen3_5_like_xsmall (53.0M params)"
+echo "Tokens:     315M"
+echo "FLOPs:      1.00e+17"
+echo "Host:       $(hostname)"
+echo "GPU:        $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'N/A')"
+echo "Start:      $(date)"
+echo "Job ID:     $SLURM_JOB_ID"
+echo "========================================"
+
+# Initialize and activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate umich-slm
+
+# Project directory
+export PROJECT_DIR="$HOME/umich-slm"
+cd "$PROJECT_DIR"
+
+# Host-specific environment setup
+if [[ $(hostname) == "lackerli"* ]]; then
+  export CUDA_HOME=/usr/local/cuda-12.6
+  export PATH=/usr/local/cuda-12.6/bin:/opt/anaconda/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  export LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64
+  export TORCH_CUDA_ARCH_LIST="8.0"
+fi
+
+if [[ $(hostname) == "sushi"* ]]; then
+  export NCCL_ASYNC_ERROR_HANDLING=1
+  export TORCH_NCCL_BLOCKING_WAIT=1
+  export NCCL_IB_DISABLE=1
+  export NCCL_P2P_LEVEL=NVL
+fi
+
+HF_HOME=/scratch/cse598s004w26_class_root/cse598s004w26_class/vnagpal/.cache/huggingface \
+  TOKENIZERS_PARALLELISM=false \
+  python scripts/pretrain_fineweb.py \
+  --output_dir /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results/qwen3_5_like_xsmall_53M_315Mtok/ \
+  --size qwen3_5_like_xsmall \
+  --batch_size 60 \
+  --gradient_accumulation_steps 2 \
+  --learning_rate 4.61e-04 \
+  --target_tokens_b 0.315 \
+  --val_percent 0 \
+  --dataset mix_code10_math5_math_reasoning5_textbook20_web60_train_500M \
+  --dataset_dir /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/500M \
+  --num_workers 4 \
+  --do_eval --eval_dataset mix_code10_math5_math_reasoning5_textbook20_web60_val_15M --eval_steps 200
+
+EXIT_CODE=$?
+echo "========================================"
+echo "Finished:   $(date)"
+echo "Exit code:  $EXIT_CODE"
+echo "========================================"
+exit $EXIT_CODE

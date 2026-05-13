@@ -1,0 +1,175 @@
+{
+  "run_metadata": {
+    "timestamp_utc": "2026-04-24T14:10:02.504186+00:00",
+    "sample_size": 24,
+    "streaming": true,
+    "output_dir": "references/dpo_suitability",
+    "command_from_repo_root": ".venv/bin/python scripts/dpo_data/evaluate_dpo_suitability.py --sample-size 24 --streaming --output-dir references/dpo_suitability"
+  },
+  "criteria": [
+    "prompt_context",
+    "pair_constructable",
+    "chosen_rejected_signal",
+    "rag_relevance",
+    "license_risk",
+    "license_status",
+    "implementation_effort",
+    "llamafactory_compat"
+  ],
+  "datasets": [
+    {
+      "dataset": "openbmb/UltraFeedback",
+      "priority": 1,
+      "checked_split": "train",
+      "sample_size": 24,
+      "classification": "high_priority_convertible",
+      "criteria": {
+        "prompt_context": true,
+        "pair_constructable": true,
+        "chosen_rejected_signal": true,
+        "rag_relevance": "high",
+        "license_risk": "requires_manual_review",
+        "license_status": "unverified",
+        "implementation_effort": "low",
+        "llamafactory_compat": true
+      },
+      "license": "unknown",
+      "load_error": null,
+      "notes": "UltraFeedback-first: existing repo prep path already supports UltraFeedback binarized conversion.",
+      "webgpt_probe": null
+    },
+    {
+      "dataset": "nvidia/HelpSteer3",
+      "priority": 2,
+      "checked_split": "train",
+      "sample_size": 24,
+      "classification": "directly_dpo_ready",
+      "criteria": {
+        "prompt_context": true,
+        "pair_constructable": true,
+        "chosen_rejected_signal": true,
+        "rag_relevance": "medium",
+        "license_risk": "requires_manual_review",
+        "license_status": "unverified",
+        "implementation_effort": "medium",
+        "llamafactory_compat": true
+      },
+      "license": "unknown",
+      "load_error": null,
+      "notes": "Contains paired responses and overall_preference; good DPO candidate after adapter conversion.",
+      "webgpt_probe": null
+    },
+    {
+      "dataset": "lmarena-ai/arena-human-preference-55k",
+      "priority": 3,
+      "checked_split": "train",
+      "sample_size": 24,
+      "classification": "directly_dpo_ready",
+      "criteria": {
+        "prompt_context": true,
+        "pair_constructable": true,
+        "chosen_rejected_signal": true,
+        "rag_relevance": "medium",
+        "license_risk": "requires_manual_review",
+        "license_status": "unverified",
+        "implementation_effort": "medium",
+        "llamafactory_compat": true
+      },
+      "license": "unknown",
+      "load_error": null,
+      "notes": "Pairwise winner format with response_a/response_b and winner flags.",
+      "webgpt_probe": null
+    },
+    {
+      "dataset": "openai/webgpt_comparisons",
+      "priority": 4,
+      "checked_split": "parquet_fallback",
+      "sample_size": 24,
+      "classification": "requires_transformation",
+      "criteria": {
+        "prompt_context": true,
+        "pair_constructable": true,
+        "chosen_rejected_signal": true,
+        "rag_relevance": "high",
+        "license_risk": "requires_manual_review",
+        "license_status": "unverified",
+        "implementation_effort": "high",
+        "llamafactory_compat": "unknown"
+      },
+      "license": "unavailable",
+      "load_error": "RuntimeError: Dataset scripts are no longer supported, but found webgpt_comparisons.py",
+      "notes": "Normal load_dataset('openai/webgpt_comparisons') is blocked by the legacy dataset-script restriction. Parquet sampling works using the recorded path. WebGPT is conceptually strong for Reasoning-First RAG. DPO mapping is feasible with prompt=question.full_text, chosen/rejected from score_0 vs score_1, excluding ties where score_0 == score_1.",
+      "webgpt_probe": {
+        "standard_loader_error": "RuntimeError: Dataset scripts are no longer supported, but found webgpt_comparisons.py",
+        "parquet_probe_status": "success",
+        "parquet_path": "hf://datasets/openai/webgpt_comparisons@refs/convert/parquet/default/train/0000.parquet",
+        "sample_size": 24,
+        "required_present": true,
+        "non_tie_preferences": 14,
+        "question_full_text_present": true,
+        "dpo_mapping": {
+          "prompt": "question.full_text",
+          "chosen": "answer_0 if score_0 > score_1 else answer_1",
+          "rejected": "answer_1 if score_0 > score_1 else answer_0",
+          "exclude": "score_0 == score_1"
+        }
+      }
+    },
+    {
+      "dataset": "OpenAssistant/oasst1",
+      "priority": 5,
+      "checked_split": "train",
+      "sample_size": 24,
+      "classification": "weaker_fit",
+      "criteria": {
+        "prompt_context": true,
+        "pair_constructable": false,
+        "chosen_rejected_signal": false,
+        "rag_relevance": "medium",
+        "license_risk": "requires_manual_review",
+        "license_status": "unverified",
+        "implementation_effort": "high",
+        "llamafactory_compat": false
+      },
+      "license": "unknown",
+      "load_error": null,
+      "notes": "Tree-structured chat data with rank metadata; requires pair construction.",
+      "webgpt_probe": null
+    },
+    {
+      "dataset": "nvidia/HelpSteer",
+      "priority": 6,
+      "checked_split": "train",
+      "sample_size": 24,
+      "classification": "weaker_fit",
+      "criteria": {
+        "prompt_context": true,
+        "pair_constructable": false,
+        "chosen_rejected_signal": false,
+        "rag_relevance": "low",
+        "license_risk": "requires_manual_review",
+        "license_status": "unverified",
+        "implementation_effort": "high",
+        "llamafactory_compat": false
+      },
+      "license": "unknown",
+      "load_error": null,
+      "notes": "Single response with scalar scores; weak direct fit for DPO unless pairs are synthesized.",
+      "webgpt_probe": null
+    }
+  ],
+  "warmup_datasets": [
+    {
+      "name": "nvidia/OpenMathInstruct-2",
+      "use": "SFT warmup for math reasoning"
+    },
+    {
+      "name": "sahil280114/codealpaca",
+      "use": "SFT warmup for code instruction following"
+    },
+    {
+      "name": "OpenBMB/ToolBench",
+      "use": "Tool-use SFT/evaluation warmup"
+    }
+  ]
+}

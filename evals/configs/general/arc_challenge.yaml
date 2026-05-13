@@ -1,0 +1,16 @@
+# ARC-Challenge — AI2 Reasoning Challenge (hard subset)
+# Grade-school science questions requiring reasoning beyond simple retrieval
+# Standard: 25-shot
+#
+# Usage:
+#   lm_eval --model hf --model_args pretrained=<model> \
+#           --tasks umichslm_arc_challenge --include_path evals/configs/general
+
+group: umichslm_arc_challenge
+task:
+  - arc_challenge
+num_fewshot: 25
+metadata:
+  benchmark: ARC-Challenge
+  fewshot: 25
+  notes: "Hard subset only; acc_norm is the primary reported metric"

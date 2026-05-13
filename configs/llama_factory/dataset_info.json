@@ -1,0 +1,114 @@
+{
+  "smollm_cosmopedia": {
+    "hf_hub_url": "HuggingFaceTB/smollm-corpus",
+    "subset": "cosmopedia-v2",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "smollm_fineweb": {
+    "hf_hub_url": "HuggingFaceTB/smollm-corpus",
+    "subset": "fineweb-edu-dedup",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "smollm_python": {
+    "hf_hub_url": "HuggingFaceTB/smollm-corpus",
+    "subset": "python-edu",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+  "fineweb_edu": {
+    "hf_hub_url": "HuggingFaceFW/fineweb-edu",
+    "subset": "sample-10BT",
+    "columns": {
+      "prompt": "text"
+    }
+  },
+    "smoltalk": {
+    "hf_hub_url": "HuggingFaceTB/smoltalk",
+    "subset": "all",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    }
+  },
+    "openmath2": {
+    "hf_hub_url": "nvidia/OpenMathInstruct-2",
+    "subset": "default",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    }
+  },
+  "umichslm_sft_train": {
+    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/sft_data/v1/sft_mix_80k/train.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "umichslm_sft_val": {
+    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/sft_data/v1/sft_mix_80k/val.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "umichslm_dpo_train": {
+    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/dpo_data/v1/ultrafeedback/train.json",
+    "ranking": true,
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "chosen": "chosen",
+      "rejected": "rejected"
+    }
+  },
+  "umichslm_dpo_val": {
+    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/dpo_data/v1/ultrafeedback/val.json",
+    "ranking": true,
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "chosen": "chosen",
+      "rejected": "rejected"
+    }
+  },
+  "umichslm_dpo_webgpt_train": {
+    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/dpo_data/v1/webgpt/train.json",
+    "ranking": true,
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "chosen": "chosen",
+      "rejected": "rejected"
+    }
+  },
+  "umichslm_dpo_webgpt_val": {
+    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/dpo_data/v1/webgpt/val.json",
+    "ranking": true,
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "conversations",
+      "chosen": "chosen",
+      "rejected": "rejected"
+    }
+  }
+}

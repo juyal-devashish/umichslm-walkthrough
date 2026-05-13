@@ -1,0 +1,302 @@
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,597 >> loading file vocab.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,597 >> loading file merges.txt
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,598 >> loading file tokenizer.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,598 >> loading file added_tokens.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,598 >> loading file special_tokens_map.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,598 >> loading file tokenizer_config.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,598 >> loading file chat_template.jinja
+[INFO|configuration_utils.py:763] 2026-04-26 16:19:56,704 >> loading configuration file /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results/qwen3_5_like_xsmall_53M_157Mtok/models/qwen3_5_like_xsmall_157Mtok_val0pct_20260426-1619/config.json
+[INFO|configuration_utils.py:839] 2026-04-26 16:19:56,705 >> Model config UMichSLMConfig {
+  "architectures": [
+    "UMichSLMForCausalLM"
+  ],
+  "attention_bias": false,
+  "attention_dropout": 0.0,
+  "bos_token_id": 1,
+  "deltanet_conv_kernel_size": 4,
+  "deltanet_every_n_layers": 0,
+  "deltanet_expand_k": 1,
+  "deltanet_expand_v": 1,
+  "deltanet_first_n_layers": 0,
+  "deltanet_num_heads": null,
+  "deltanet_use_short_conv": true,
+  "deltanet_variant": "gated",
+  "drope_drop_fraction": 0.875,
+  "dtype": "bfloat16",
+  "engram_conv_kernel_size": 3,
+  "engram_embed_dim": 64,
+  "engram_layer_ids": null,
+  "engram_ngram_sizes": null,
+  "engram_num_heads": 8,
+  "engram_seed": 42,
+  "engram_table_size": 49999,
+  "engram_use_conv": false,
+  "eos_token_id": 2,
+  "global_attention_every_n_layers": 4,
+  "griffin_num_heads": 6,
+  "griffin_pattern": null,
+  "hidden_act": "silu",
+  "hidden_size": 336,
+  "hybrid_attention_ratio": [
+    "delta",
+    "delta",
+    "delta",
+    "attn"
+  ],
+  "hymba_kv_share_group_size": 2,
+  "hymba_num_meta_tokens": 128,
+  "hymba_share_kv_layers": false,
+  "hymba_ssm_conv_size": 4,
+  "hymba_ssm_expand": 2,
+  "hymba_ssm_state_size": 16,
+  "initializer_range": 0.02,
+  "intermediate_size": 896,
+  "lm_loss_chunk_cap_bytes": 1200000000,
+  "lm_loss_chunk_size": 512,
+  "max_position_embeddings": 4096,
+  "mla_kv_lora_rank": 512,
+  "mla_q_lora_rank": 0,
+  "mla_qk_nope_head_dim": 128,
+  "mla_qk_rope_head_dim": 64,
+  "mla_v_head_dim": 128,
+  "mlp_bias": false,
+  "mod_always_used_layers": null,
+  "mod_aux_loss_weight": 0.01,
+  "mod_capacity": 0.125,
+  "mod_every_n_layers": 2,
+  "mod_num_always_used_end": 0,
+  "mod_num_always_used_start": 0,
+  "mod_use_aux_predictor": false,
+  "moda_active_layers": null,
+  "moda_depth_kv_every_n": 1,
+  "moda_max_depth_cache": -1,
+  "moda_use_ffn_kv": true,
+  "model_type": "umichslm",
+  "moe_expert_intermediate_size": null,
+  "moe_progressive": false,
+  "moe_progressive_start_ratio": 0.5,
+  "mtp_dropout": 0.0,
+  "mtp_loss_weight": 0.3,
+  "mtp_num_heads": 1,
+  "mtp_num_layers": 1,
+  "mtp_share_head": true,
+  "norm_placement": "pre",
+  "num_attention_heads": 6,
+  "num_experts": 8,
+  "num_experts_per_tok": 2,
+  "num_hidden_layers": 15,
+  "num_key_value_heads": 2,
+  "num_meta_tokens": 0,
+  "num_shared_experts": 0,
+  "pad_token_id": 2,
+  "parallel_mlp": false,
+  "position_embedding_type": "rope",
+  "repo_dim": null,
+  "repo_start_layer": 5,
+  "repo_use_base_positions": true,
+  "rms_norm_eps": 1e-06,
+  "rope_scaling": null,
+  "rope_theta": 10000.0,
+  "router_aux_loss_coef": 0.01,
+  "router_jitter": 0.0,
+  "router_z_loss_coef": 0.001,
+  "sliding_window": null,
+  "tie_word_embeddings": false,
+  "transformers_version": "4.57.1",
+  "use_block_weight_sharing": false,
+  "use_cache": true,
+  "use_deltanet": true,
+  "use_drope": false,
+  "use_engram": false,
+  "use_griffin": false,
+  "use_hymba": false,
+  "use_mla": false,
+  "use_mod": false,
+  "use_moda": false,
+  "use_moe": false,
+  "use_mtp": false,
+  "use_repo": false,
+  "use_sliding_window_cache": true,
+  "use_zero_centered_rmsnorm": false,
+  "vocab_size": 49152,
+  "weight_sharing_block_size": 2
+}
+
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,706 >> loading file vocab.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,706 >> loading file merges.txt
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,706 >> loading file tokenizer.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,706 >> loading file added_tokens.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,706 >> loading file special_tokens_map.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,706 >> loading file tokenizer_config.json
+[INFO|tokenization_utils_base.py:2093] 2026-04-26 16:19:56,706 >> loading file chat_template.jinja
+Converting format of dataset (num_proc=4):   0%|          | 0/76780 [00:00<?, ? examples/s]Converting format of dataset (num_proc=4):   1%|          | 891/76780 [00:00<00:18, 4116.14 examples/s]Converting format of dataset (num_proc=4):   4%|▍         | 3200/76780 [00:00<00:06, 11389.46 examples/s]Converting format of dataset (num_proc=4):   6%|▋         | 4990/76780 [00:00<00:05, 12745.59 examples/s]Converting format of dataset (num_proc=4):  11%|█         | 8471/76780 [00:00<00:03, 17599.54 examples/s]Converting format of dataset (num_proc=4):  16%|█▌        | 12386/76780 [00:00<00:02, 22045.23 examples/s]Converting format of dataset (num_proc=4):  22%|██▏       | 16753/76780 [00:00<00:02, 27400.38 examples/s]Converting format of dataset (num_proc=4):  26%|██▌       | 19817/76780 [00:00<00:02, 27189.97 examples/s]Converting format of dataset (num_proc=4):  31%|███       | 23734/76780 [00:01<00:01, 29574.56 examples/s]Converting format of dataset (num_proc=4):  35%|███▌      | 26951/76780 [00:01<00:01, 29120.72 examples/s]Converting format of dataset (num_proc=4):  41%|████      | 31488/76780 [00:01<00:01, 33373.36 examples/s]Converting format of dataset (num_proc=4):  46%|████▌     | 35178/76780 [00:01<00:01, 34334.75 examples/s]Converting format of dataset (num_proc=4):  51%|█████     | 39085/76780 [00:01<00:01, 33211.51 examples/s]Converting format of dataset (num_proc=4):  56%|█████▌    | 42677/76780 [00:01<00:01, 32627.81 examples/s]Converting format of dataset (num_proc=4):  60%|██████    | 46081/76780 [00:01<00:00, 31800.24 examples/s]Converting format of dataset (num_proc=4):  65%|██████▍   | 49659/76780 [00:01<00:01, 26304.88 examples/s]Converting format of dataset (num_proc=4):  69%|██████▊   | 52692/76780 [00:02<00:01, 18791.85 examples/s]Converting format of dataset (num_proc=4):  72%|███████▏  | 55583/76780 [00:02<00:01, 20125.54 examples/s]Converting format of dataset (num_proc=4):  76%|███████▋  | 58568/76780 [00:02<00:00, 21924.74 examples/s]Converting format of dataset (num_proc=4):  81%|████████▏ | 62500/76780 [00:02<00:00, 25365.54 examples/s]Converting format of dataset (num_proc=4):  86%|████████▌ | 65743/76780 [00:02<00:00, 26231.70 examples/s]Converting format of dataset (num_proc=4):  90%|████████▉ | 68886/76780 [00:02<00:00, 26165.94 examples/s]Converting format of dataset (num_proc=4):  94%|█████████▎| 71824/76780 [00:02<00:00, 21634.84 examples/s]Converting format of dataset (num_proc=4):  97%|█████████▋| 74540/76780 [00:03<00:00, 22289.61 examples/s]Converting format of dataset (num_proc=4): 100%|██████████| 76780/76780 [00:03<00:00, 22477.09 examples/s]
+Converting format of dataset (num_proc=4):   0%|          | 0/6346 [00:00<?, ? examples/s]Converting format of dataset (num_proc=4):   7%|▋         | 458/6346 [00:00<00:02, 2792.60 examples/s]Converting format of dataset (num_proc=4):  36%|███▌      | 2277/6346 [00:00<00:00, 9887.56 examples/s]Converting format of dataset (num_proc=4):  84%|████████▍ | 5349/6346 [00:00<00:00, 17986.74 examples/s]Converting format of dataset (num_proc=4): 100%|██████████| 6346/6346 [00:00<00:00, 10878.50 examples/s]
+Running tokenizer on dataset (num_proc=4):   0%|          | 0/76780 [00:00<?, ? examples/s][WARNING|tokenization_utils_base.py:4009] 2026-04-26 16:20:08,781 >> Token indices sequence length is longer than the specified maximum sequence length for this model (4236 > 4096). Running this sequence through the model will result in indexing errors
+[WARNING|tokenization_utils_base.py:4009] 2026-04-26 16:20:08,969 >> Token indices sequence length is longer than the specified maximum sequence length for this model (4931 > 4096). Running this sequence through the model will result in indexing errors
+Running tokenizer on dataset (num_proc=4):   1%|▏         | 1000/76780 [00:02<03:30, 359.38 examples/s][WARNING|tokenization_utils_base.py:4009] 2026-04-26 16:20:09,131 >> Token indices sequence length is longer than the specified maximum sequence length for this model (5111 > 4096). Running this sequence through the model will result in indexing errors
+[WARNING|tokenization_utils_base.py:4009] 2026-04-26 16:20:09,204 >> Token indices sequence length is longer than the specified maximum sequence length for this model (4304 > 4096). Running this sequence through the model will result in indexing errors
+Running tokenizer on dataset (num_proc=4):   3%|▎         | 2000/76780 [00:02<01:34, 793.36 examples/s]Running tokenizer on dataset (num_proc=4):   4%|▍         | 3000/76780 [00:03<00:58, 1265.75 examples/s]Running tokenizer on dataset (num_proc=4):   7%|▋         | 5000/76780 [00:05<01:20, 893.93 examples/s] Running tokenizer on dataset (num_proc=4):   9%|▉         | 7000/76780 [00:06<00:44, 1559.58 examples/s]Running tokenizer on dataset (num_proc=4):  10%|█         | 8000/76780 [00:06<00:38, 1798.54 examples/s]Running tokenizer on dataset (num_proc=4):  12%|█▏        | 9000/76780 [00:08<01:08, 986.92 examples/s] Running tokenizer on dataset (num_proc=4):  14%|█▍        | 11000/76780 [00:08<00:41, 1590.95 examples/s]Running tokenizer on dataset (num_proc=4):  16%|█▌        | 12000/76780 [00:09<00:34, 1892.64 examples/s]Running tokenizer on dataset (num_proc=4):  17%|█▋        | 13000/76780 [00:10<00:54, 1177.79 examples/s]Running tokenizer on dataset (num_proc=4):  18%|█▊        | 14000/76780 [00:11<00:47, 1327.23 examples/s]Running tokenizer on dataset (num_proc=4):  20%|█▉        | 15000/76780 [00:11<00:35, 1728.67 examples/s]Running tokenizer on dataset (num_proc=4):  21%|██        | 16000/76780 [00:12<00:36, 1667.49 examples/s]Running tokenizer on dataset (num_proc=4):  22%|██▏       | 17000/76780 [00:13<00:52, 1131.69 examples/s]Running tokenizer on dataset (num_proc=4):  23%|██▎       | 18000/76780 [00:13<00:40, 1438.47 examples/s]Running tokenizer on dataset (num_proc=4):  25%|██▍       | 19000/76780 [00:14<00:31, 1846.78 examples/s]Running tokenizer on dataset (num_proc=4):  26%|██▌       | 20000/76780 [00:14<00:33, 1700.91 examples/s]Running tokenizer on dataset (num_proc=4):  27%|██▋       | 21000/76780 [00:15<00:41, 1351.36 examples/s]Running tokenizer on dataset (num_proc=4):  29%|██▊       | 22000/76780 [00:16<00:43, 1259.99 examples/s]Running tokenizer on dataset (num_proc=4):  30%|██▉       | 23000/76780 [00:17<00:32, 1663.95 examples/s]Running tokenizer on dataset (num_proc=4):  31%|███▏      | 24000/76780 [00:17<00:33, 1567.19 examples/s]Running tokenizer on dataset (num_proc=4):  33%|███▎      | 25000/76780 [00:18<00:29, 1785.28 examples/s]Running tokenizer on dataset (num_proc=4):  34%|███▍      | 26000/76780 [00:19<00:39, 1281.94 examples/s]Running tokenizer on dataset (num_proc=4):  36%|███▋      | 28000/76780 [00:20<00:31, 1571.12 examples/s]Running tokenizer on dataset (num_proc=4):  39%|███▉      | 30000/76780 [00:22<00:34, 1358.51 examples/s]Running tokenizer on dataset (num_proc=4):  40%|████      | 31000/76780 [00:22<00:28, 1627.80 examples/s]Running tokenizer on dataset (num_proc=4):  42%|████▏     | 32000/76780 [00:23<00:29, 1511.20 examples/s]Running tokenizer on dataset (num_proc=4):  43%|████▎     | 33000/76780 [00:23<00:24, 1763.86 examples/s]Running tokenizer on dataset (num_proc=4):  44%|████▍     | 34000/76780 [00:24<00:34, 1254.83 examples/s]Running tokenizer on dataset (num_proc=4):  46%|████▌     | 35000/76780 [00:25<00:28, 1469.19 examples/s]Running tokenizer on dataset (num_proc=4):  47%|████▋     | 36000/76780 [00:25<00:21, 1932.38 examples/s]Running tokenizer on dataset (num_proc=4):  48%|████▊     | 37000/76780 [00:26<00:24, 1621.67 examples/s]Running tokenizer on dataset (num_proc=4):  49%|████▉     | 38000/76780 [00:27<00:32, 1193.23 examples/s]Running tokenizer on dataset (num_proc=4):  51%|█████     | 39000/76780 [00:27<00:24, 1540.74 examples/s]Running tokenizer on dataset (num_proc=4):  52%|█████▏    | 40000/76780 [00:28<00:19, 1848.93 examples/s]Running tokenizer on dataset (num_proc=4):  53%|█████▎    | 41000/76780 [00:29<00:28, 1266.51 examples/s]Running tokenizer on dataset (num_proc=4):  55%|█████▍    | 42000/76780 [00:30<00:25, 1351.21 examples/s]Running tokenizer on dataset (num_proc=4):  56%|█████▌    | 43000/76780 [00:30<00:20, 1621.21 examples/s]Running tokenizer on dataset (num_proc=4):  57%|█████▋    | 44000/76780 [00:30<00:18, 1742.04 examples/s]Running tokenizer on dataset (num_proc=4):  59%|█████▊    | 45000/76780 [00:32<00:24, 1272.16 examples/s]Running tokenizer on dataset (num_proc=4):  60%|█████▉    | 46000/76780 [00:32<00:18, 1662.71 examples/s]Running tokenizer on dataset (num_proc=4):  61%|██████    | 47000/76780 [00:33<00:19, 1542.91 examples/s]Running tokenizer on dataset (num_proc=4):  63%|██████▎   | 48000/76780 [00:34<00:21, 1348.88 examples/s]Running tokenizer on dataset (num_proc=4):  64%|██████▍   | 49000/76780 [00:34<00:18, 1479.04 examples/s]Running tokenizer on dataset (num_proc=4):  65%|██████▌   | 50000/76780 [00:35<00:17, 1545.76 examples/s]Running tokenizer on dataset (num_proc=4):  66%|██████▋   | 51000/76780 [00:35<00:16, 1521.03 examples/s]Running tokenizer on dataset (num_proc=4):  68%|██████▊   | 52000/76780 [00:36<00:17, 1382.51 examples/s]Running tokenizer on dataset (num_proc=4):  69%|██████▉   | 53000/76780 [00:36<00:13, 1797.21 examples/s]Running tokenizer on dataset (num_proc=4):  70%|███████   | 54000/76780 [00:38<00:18, 1264.77 examples/s]Running tokenizer on dataset (num_proc=4):  72%|███████▏  | 55000/76780 [00:38<00:15, 1393.93 examples/s]Running tokenizer on dataset (num_proc=4):  73%|███████▎  | 56000/76780 [00:39<00:12, 1668.21 examples/s]Running tokenizer on dataset (num_proc=4):  74%|███████▍  | 57000/76780 [00:39<00:10, 1853.82 examples/s]Running tokenizer on dataset (num_proc=4):  76%|███████▌  | 58000/76780 [00:40<00:14, 1277.62 examples/s]Running tokenizer on dataset (num_proc=4):  77%|███████▋  | 59000/76780 [00:41<00:12, 1449.10 examples/s]Running tokenizer on dataset (num_proc=4):  79%|███████▉  | 61000/76780 [00:42<00:08, 1784.19 examples/s]Running tokenizer on dataset (num_proc=4):  81%|████████  | 62000/76780 [00:43<00:11, 1240.12 examples/s]Running tokenizer on dataset (num_proc=4):  83%|████████▎ | 64000/76780 [00:43<00:06, 1852.65 examples/s]Running tokenizer on dataset (num_proc=4):  85%|████████▍ | 65000/76780 [00:44<00:06, 1892.55 examples/s]Running tokenizer on dataset (num_proc=4):  86%|████████▌ | 66000/76780 [00:46<00:09, 1189.40 examples/s]Running tokenizer on dataset (num_proc=4):  89%|████████▊ | 68000/76780 [00:46<00:04, 1841.79 examples/s]Running tokenizer on dataset (num_proc=4):  90%|█████████ | 69195/76780 [00:47<00:04, 1717.18 examples/s]Running tokenizer on dataset (num_proc=4):  91%|█████████▏| 70195/76780 [00:48<00:05, 1225.90 examples/s]Running tokenizer on dataset (num_proc=4):  93%|█████████▎| 71195/76780 [00:49<00:03, 1502.96 examples/s]Running tokenizer on dataset (num_proc=4):  94%|█████████▍| 72195/76780 [00:49<00:03, 1419.09 examples/s]Running tokenizer on dataset (num_proc=4):  95%|█████████▌| 73195/76780 [00:51<00:03, 1043.75 examples/s]Running tokenizer on dataset (num_proc=4):  97%|█████████▋| 74195/76780 [00:51<00:01, 1299.39 examples/s]Running tokenizer on dataset (num_proc=4):  98%|█████████▊| 75390/76780 [00:52<00:00, 1480.35 examples/s]Running tokenizer on dataset (num_proc=4): 100%|█████████▉| 76585/76780 [00:54<00:00, 1020.59 examples/s]Running tokenizer on dataset (num_proc=4): 100%|██████████| 76780/76780 [00:54<00:00, 915.91 examples/s] Running tokenizer on dataset (num_proc=4): 100%|██████████| 76780/76780 [00:55<00:00, 1387.43 examples/s]
+Running tokenizer on dataset (num_proc=4):   0%|          | 0/6346 [00:00<?, ? examples/s][WARNING|tokenization_utils_base.py:4009] 2026-04-26 16:21:04,192 >> Token indices sequence length is longer than the specified maximum sequence length for this model (4275 > 4096). Running this sequence through the model will result in indexing errors
+[WARNING|tokenization_utils_base.py:4009] 2026-04-26 16:21:04,214 >> Token indices sequence length is longer than the specified maximum sequence length for this model (4347 > 4096). Running this sequence through the model will result in indexing errors
+[WARNING|tokenization_utils_base.py:4009] 2026-04-26 16:21:04,278 >> Token indices sequence length is longer than the specified maximum sequence length for this model (6910 > 4096). Running this sequence through the model will result in indexing errors
+Running tokenizer on dataset (num_proc=4):  16%|█▌        | 1000/6346 [00:02<00:14, 362.94 examples/s][WARNING|tokenization_utils_base.py:4009] 2026-04-26 16:21:04,550 >> Token indices sequence length is longer than the specified maximum sequence length for this model (8013 > 4096). Running this sequence through the model will result in indexing errors
+Running tokenizer on dataset (num_proc=4):  63%|██████▎   | 4000/6346 [00:03<00:01, 1598.57 examples/s]Running tokenizer on dataset (num_proc=4):  72%|███████▏  | 4587/6346 [00:04<00:01, 1244.25 examples/s]Running tokenizer on dataset (num_proc=4):  82%|████████▏ | 5173/6346 [00:04<00:00, 1298.56 examples/s]Running tokenizer on dataset (num_proc=4): 100%|██████████| 6346/6346 [00:05<00:00, 1431.95 examples/s]Running tokenizer on dataset (num_proc=4): 100%|██████████| 6346/6346 [00:05<00:00, 1202.08 examples/s]
+[INFO|configuration_utils.py:763] 2026-04-26 16:21:07,066 >> loading configuration file /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results/qwen3_5_like_xsmall_53M_157Mtok/models/qwen3_5_like_xsmall_157Mtok_val0pct_20260426-1619/config.json
+[INFO|configuration_utils.py:839] 2026-04-26 16:21:07,067 >> Model config UMichSLMConfig {
+  "architectures": [
+    "UMichSLMForCausalLM"
+  ],
+  "attention_bias": false,
+  "attention_dropout": 0.0,
+  "bos_token_id": 1,
+  "deltanet_conv_kernel_size": 4,
+  "deltanet_every_n_layers": 0,
+  "deltanet_expand_k": 1,
+  "deltanet_expand_v": 1,
+  "deltanet_first_n_layers": 0,
+  "deltanet_num_heads": null,
+  "deltanet_use_short_conv": true,
+  "deltanet_variant": "gated",
+  "drope_drop_fraction": 0.875,
+  "dtype": "bfloat16",
+  "engram_conv_kernel_size": 3,
+  "engram_embed_dim": 64,
+  "engram_layer_ids": null,
+  "engram_ngram_sizes": null,
+  "engram_num_heads": 8,
+  "engram_seed": 42,
+  "engram_table_size": 49999,
+  "engram_use_conv": false,
+  "eos_token_id": 2,
+  "global_attention_every_n_layers": 4,
+  "griffin_num_heads": 6,
+  "griffin_pattern": null,
+  "hidden_act": "silu",
+  "hidden_size": 336,
+  "hybrid_attention_ratio": [
+    "delta",
+    "delta",
+    "delta",
+    "attn"
+  ],
+  "hymba_kv_share_group_size": 2,
+  "hymba_num_meta_tokens": 128,
+  "hymba_share_kv_layers": false,
+  "hymba_ssm_conv_size": 4,
+  "hymba_ssm_expand": 2,
+  "hymba_ssm_state_size": 16,
+  "initializer_range": 0.02,
+  "intermediate_size": 896,
+  "lm_loss_chunk_cap_bytes": 1200000000,
+  "lm_loss_chunk_size": 512,
+  "max_position_embeddings": 4096,
+  "mla_kv_lora_rank": 512,
+  "mla_q_lora_rank": 0,
+  "mla_qk_nope_head_dim": 128,
+  "mla_qk_rope_head_dim": 64,
+  "mla_v_head_dim": 128,
+  "mlp_bias": false,
+  "mod_always_used_layers": null,
+  "mod_aux_loss_weight": 0.01,
+  "mod_capacity": 0.125,
+  "mod_every_n_layers": 2,
+  "mod_num_always_used_end": 0,
+  "mod_num_always_used_start": 0,
+  "mod_use_aux_predictor": false,
+  "moda_active_layers": null,
+  "moda_depth_kv_every_n": 1,
+  "moda_max_depth_cache": -1,
+  "moda_use_ffn_kv": true,
+  "model_type": "umichslm",
+  "moe_expert_intermediate_size": null,
+  "moe_progressive": false,
+  "moe_progressive_start_ratio": 0.5,
+  "mtp_dropout": 0.0,
+  "mtp_loss_weight": 0.3,
+  "mtp_num_heads": 1,
+  "mtp_num_layers": 1,
+  "mtp_share_head": true,
+  "norm_placement": "pre",
+  "num_attention_heads": 6,
+  "num_experts": 8,
+  "num_experts_per_tok": 2,
+  "num_hidden_layers": 15,
+  "num_key_value_heads": 2,
+  "num_meta_tokens": 0,
+  "num_shared_experts": 0,
+  "pad_token_id": 2,
+  "parallel_mlp": false,
+  "position_embedding_type": "rope",
+  "repo_dim": null,
+  "repo_start_layer": 5,
+  "repo_use_base_positions": true,
+  "rms_norm_eps": 1e-06,
+  "rope_scaling": null,
+  "rope_theta": 10000.0,
+  "router_aux_loss_coef": 0.01,
+  "router_jitter": 0.0,
+  "router_z_loss_coef": 0.001,
+  "sliding_window": null,
+  "tie_word_embeddings": false,
+  "transformers_version": "4.57.1",
+  "use_block_weight_sharing": false,
+  "use_cache": true,
+  "use_deltanet": true,
+  "use_drope": false,
+  "use_engram": false,
+  "use_griffin": false,
+  "use_hymba": false,
+  "use_mla": false,
+  "use_mod": false,
+  "use_moda": false,
+  "use_moe": false,
+  "use_mtp": false,
+  "use_repo": false,
+  "use_sliding_window_cache": true,
+  "use_zero_centered_rmsnorm": false,
+  "vocab_size": 49152,
+  "weight_sharing_block_size": 2
+}
+
+[WARNING|logging.py:328] 2026-04-26 16:21:07,554 >> `torch_dtype` is deprecated! Use `dtype` instead!
+[INFO|modeling_utils.py:1169] 2026-04-26 16:21:07,555 >> loading weights file /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results/qwen3_5_like_xsmall_53M_157Mtok/models/qwen3_5_like_xsmall_157Mtok_val0pct_20260426-1619/model.safetensors
+[INFO|modeling_utils.py:1243] 2026-04-26 16:21:07,556 >> Will use dtype=torch.bfloat16 as defined in model's config object
+[INFO|modeling_utils.py:2341] 2026-04-26 16:21:07,556 >> Instantiating UMichSLMForCausalLM model under default dtype torch.bfloat16.
+[INFO|configuration_utils.py:986] 2026-04-26 16:21:07,561 >> Generate config GenerationConfig {
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "pad_token_id": 2,
+  "use_cache": false
+}
+
+[INFO|configuration_utils.py:939] 2026-04-26 16:21:08,045 >> loading configuration file /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results/qwen3_5_like_xsmall_53M_157Mtok/models/qwen3_5_like_xsmall_157Mtok_val0pct_20260426-1619/generation_config.json
+[INFO|configuration_utils.py:986] 2026-04-26 16:21:08,046 >> Generate config GenerationConfig {
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "pad_token_id": 2
+}
+
+[INFO|dynamic_module_utils.py:423] 2026-04-26 16:21:08,046 >> Could not locate the custom_generate/generate.py inside /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results/qwen3_5_like_xsmall_53M_157Mtok/models/qwen3_5_like_xsmall_157Mtok_val0pct_20260426-1619.
+Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+[WARNING|trainer.py:906] 2026-04-26 16:21:08,102 >> The model is already on multiple devices. Skipping the move to device specified in `args`.
+[INFO|trainer.py:699] 2026-04-26 16:21:08,105 >> max_steps is given, it will override any value given in num_train_epochs
+[INFO|trainer.py:749] 2026-04-26 16:21:08,106 >> Using auto half precision backend
+[INFO|trainer.py:2519] 2026-04-26 16:21:08,448 >> ***** Running training *****
+[INFO|trainer.py:2520] 2026-04-26 16:21:08,448 >>   Num examples = 37,529
+[INFO|trainer.py:2521] 2026-04-26 16:21:08,448 >>   Num Epochs = 3
+[INFO|trainer.py:2522] 2026-04-26 16:21:08,448 >>   Instantaneous batch size per device = 24
+[INFO|trainer.py:2525] 2026-04-26 16:21:08,448 >>   Total train batch size (w. parallel, distributed & accumulation) = 120
+[INFO|trainer.py:2526] 2026-04-26 16:21:08,448 >>   Gradient Accumulation steps = 5
+[INFO|trainer.py:2527] 2026-04-26 16:21:08,448 >>   Total optimization steps = 638
+[INFO|trainer.py:2528] 2026-04-26 16:21:08,449 >>   Number of trainable parameters = 52,978,800
+[INFO|integration_utils.py:867] 2026-04-26 16:21:08,449 >> Automatic Weights & Biases logging enabled, to disable set os.environ["WANDB_DISABLED"] = "true"
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/vnagpal/.netrc.
+wandb: Currently logged in as: 2002vansh (umich-slm) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run 529a0b0f
+wandb: Tracking run with wandb version 0.26.0
+wandb: Run data is saved locally in /home/vnagpal/umich-slm/wandb/run-20260426_162108-529a0b0f
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run qwen3_5_like_xsmall_157Mtok_val0pct_20260426-1619
+wandb: ⭐️ View project at https://wandb.ai/umich-slm/umich-slm
+wandb: 🚀 View run at https://wandb.ai/umich-slm/umich-slm/runs/529a0b0f
+  0%|          | 0/638 [00:00<?, ?it/s]  0%|          | 1/638 [03:06<33:00:59, 186.59s/it]                                                     0%|          | 1/638 [03:06<33:00:59, 186.59s/it]  0%|          | 2/638 [06:06<32:17:04, 182.74s/it]                                                     0%|          | 2/638 [06:06<32:17:04, 182.74s/it]  0%|          | 3/638 [09:06<32:00:26, 181.46s/it]                                                     0%|          | 3/638 [09:06<32:00:26, 181.46s/it]

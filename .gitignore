@@ -127,7 +127,7 @@ ipython_config.py
 #   in the .venv directory. It is recommended not to include this directory in version control.
 .pixi
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+# PEP 582; used by e.g. pyflow and github.com/pdm-project/pdm
 __pypackages__/
 
 # Celery stuff
@@ -212,6 +212,25 @@ __marimo__/
 CLAUDE.md
 
 outputs/
+# Root-anchored too: on hosts where ./outputs is a SYMLINK into
+# /shared/6/projects/umich-slm/outputs, the "outputs/" pattern above does not
+# match it (dir-only patterns skip symlinks) and it shows up as untracked.
+/outputs
+outputs.old/
 generated-slurm/
 
 wandb/
+
+# SLURM run artifacts (generated batch scripts + job logs).
+# Root-anchored so configs/slurm/ (tracked config) is NOT ignored.
+/slurm/
+/slurm_logs/
+/slurm-logs/
+/slurm-*.out
+
+# Editor backup files
+*~
+
+# Tokenizer experiment outputs (large generated figures + derived data)
+experiments/tokenizers/figures/
+experiments/tokenizers/data/

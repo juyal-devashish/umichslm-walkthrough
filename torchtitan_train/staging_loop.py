@@ -127,6 +127,20 @@ def run_staged(config, *, rank: int, local_rank: int, world_size: int) -> None:
             config.staging, config.optimizer, stage_idx, n_stages
         )
 
+        # Per-stage TST opt-in: copy from StageSpec.tst into the stage's
+        # TitanConfig.training.tst. If the stage spec doesn't set TST, leave
+        # the top-level config's TST setting alone (so a user can also enable
+        # TST globally via the TOML if every stage should use the same s/r).
+        if spec.tst is not None:
+            stage_tst = stage_config.training.tst
+            stage_tst.enabled = bool(spec.tst.enabled)
+            stage_tst.bag_size = int(spec.tst.bag_size)
+            stage_tst.recovery_ratio = float(spec.tst.recovery_ratio)
+            stage_tst.loss_weighting = str(spec.tst.loss_weighting)
+            stage_tst.extend_seq_len_for_equal_flops = bool(
+                spec.tst.extend_seq_len_for_equal_flops
+            )
+
         if stage_idx == 0:
             # First stage uses the model defined by [model].size (or init_from
             # if the user supplied a bootstrap). The stage spec is set on the

@@ -108,3 +108,75 @@ def recommend_boundary(
         "L_out_blocks": int(L_out),
         "skip_blocks": skip_blocks,
     }
+
+
+# ---------------------------------------------------------------------------
+# Static staging-plan generation (no probes needed)
+# ---------------------------------------------------------------------------
+def staging_plan_for(
+    *,
+    parent_layers: int,
+    child_layers: int,
+    parent_hidden: int,
+    child_hidden: int,
+) -> Dict[str, Any]:
+    """Return a parent→child block-copy plan for layer-grown pretraining.
+
+    Used at SLURM-script generation time by ``scripts/scaling_laws.py
+    delphi_sweep`` so the staged variant of a run is self-contained: the
+    plan encodes which parent blocks to copy and where new blocks are
+    inserted.
+
+    Plan layout
+    -----------
+    Given ``parent_layers = P`` and ``child_layers = C`` (C ≥ P), we keep
+    one parent block per "anchor" position in the child stack and insert
+    fresh blocks in the gaps:
+
+      child position k →
+        anchor index = round(k · (P − 1) / (C − 1))   for k = 0..C−1
+
+    Successive duplicate anchor indices mean the previous child position
+    inserts a *fresh* block. The width grows linearly: each block gets
+    ``hidden_size = child_hidden`` (the parent weights are projected up via
+    zero-padded copy at build time — see ``build_stage.py``).
+
+    Returns
+    -------
+    dict
+        ``{
+            "child_layers": C,
+            "parent_layers": P,
+            "child_hidden": child_hidden,
+            "parent_hidden": parent_hidden,
+            "anchor_per_child": List[int],   # length C
+            "fresh_positions":  List[int],   # subset of range(C)
+            "width_grew":       bool,
+        }``
+    """
+    if parent_layers < 1 or child_layers < parent_layers:
+        raise ValueError(
+            f"staging_plan_for: need child_layers ({child_layers}) >= parent_layers ({parent_layers}) >= 1"
+        )
+    if parent_layers == child_layers:
+        anchors = list(range(parent_layers))
+        fresh: List[int] = []
+    else:
+        denom = max(1, child_layers - 1)
+        anchors = [round(k * (parent_layers - 1) / denom) for k in range(child_layers)]
+        fresh = []
+        seen: Dict[int, int] = {}
+        for k, a in enumerate(anchors):
+            if a in seen:
+                fresh.append(k)
+            else:
+                seen[a] = k
+    return {
+        "child_layers": int(child_layers),
+        "parent_layers": int(parent_layers),
+        "child_hidden": int(child_hidden),
+        "parent_hidden": int(parent_hidden),
+        "anchor_per_child": anchors,
+        "fresh_positions": fresh,
+        "width_grew": bool(child_hidden > parent_hidden),
+    }

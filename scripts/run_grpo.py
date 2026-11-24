@@ -11,14 +11,14 @@ transformers.Trainer directly) so that custom reward functions are easy to wire 
 Example usage (single run):
     python scripts/run_grpo.py \\
         --model_path ./outputs/umichslm-sft-lr2e-5 \\
-        --train_data /scratch/.../grpo_data/v1/gsm8k/train.jsonl \\
-        --val_data   /scratch/.../grpo_data/v1/gsm8k/val.jsonl \\
+        --train_data /path/to/data \\
+        --val_data   /path/to/data \\
         --output_dir ./outputs/umichslm-grpo-gsm8k
 
 With YAML config + CLI overrides (used by the SLURM sweep):
     python scripts/run_grpo.py \\
         --config configs/llama_factory/umichslm_grpo.yaml \\
-        --model_path /scratch/.../umichslm-sft-lr2e-5 \\
+        --model_path /path/to/data \\
         --num_generations 8 \\
         --epsilon 0.2
 """

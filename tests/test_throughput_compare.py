@@ -16,6 +16,7 @@ import pytest
 # Import from scripts/ — keep the import path resilient even when pytest's
 # rootdir doesn't include scripts/.
 import sys
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import throughput_compare as tc  # noqa: E402
@@ -40,10 +41,17 @@ def test_detect_variant(name: str, expected):
 
 
 # ----------------------------------------------------------------- titan parse
-def _make_titan_run(root: Path, *, variant: str, world_size: int = 1,
-                    seq_len: int = 2048, per_device: int = 8,
-                    grad_accum: int = 16, n_steps: int = 50,
-                    bf16: bool = True) -> Path:
+def _make_titan_run(
+    root: Path,
+    *,
+    variant: str,
+    world_size: int = 1,
+    seq_len: int = 2048,
+    per_device: int = 8,
+    grad_accum: int = 16,
+    n_steps: int = 50,
+    bf16: bool = True,
+) -> Path:
     run_dir = root / f"titan_small_{variant}_lr3e4"
     run_dir.mkdir(parents=True)
 
@@ -59,30 +67,36 @@ def _make_titan_run(root: Path, *, variant: str, world_size: int = 1,
             tokens_per_sec = 12_000.0
             step_ms = 80.0
             mfu = 55.0
-        rows.append({
-            "step": step,
-            "loss": 6.0 - step * 0.01,
-            "lr": 3e-4,
-            "tokens_per_sec": tokens_per_sec,
-            "step_time_ms": step_ms,
-            "mfu_pct": mfu,
-            "peak_mem_gb": 12.5,
-            "grad_norm": 0.5,
-        })
+        rows.append(
+            {
+                "step": step,
+                "loss": 6.0 - step * 0.01,
+                "lr": 3e-4,
+                "tokens_per_sec": tokens_per_sec,
+                "step_time_ms": step_ms,
+                "mfu_pct": mfu,
+                "peak_mem_gb": 12.5,
+                "grad_norm": 0.5,
+            }
+        )
     (run_dir / "metrics.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
 
     # Sidecar config in a fake checkpoint dir (mimics what save_checkpoint writes).
     ckpt = run_dir / "checkpoint-50"
     ckpt.mkdir()
-    (ckpt / "titan_config.json").write_text(json.dumps({
-        "training": {
-            "per_device_batch_size": per_device,
-            "gradient_accumulation_steps": grad_accum,
-            "bf16": bf16,
-        },
-        "data": {"seq_len": seq_len},
-        "parallelism": {"dp_replicate_degree": world_size},
-    }))
+    (ckpt / "titan_config.json").write_text(
+        json.dumps(
+            {
+                "training": {
+                    "per_device_batch_size": per_device,
+                    "gradient_accumulation_steps": grad_accum,
+                    "bf16": bf16,
+                },
+                "data": {"seq_len": seq_len},
+                "parallelism": {"dp_replicate_degree": world_size},
+            }
+        )
+    )
     return run_dir
 
 
@@ -118,10 +132,17 @@ def test_parse_titan_run_returns_none_when_no_metrics(tmp_path: Path):
 
 
 # ----------------------------------------------------------------- LF parse
-def _make_lf_run(root: Path, *, variant: str, tokens_per_sec: float = 9_500.0,
-                 train_runtime: float = 1234.5, train_loss: float = 4.2,
-                 global_step: int = 3814, with_tokens_per_sec: bool = True,
-                 with_yaml: bool = True) -> Path:
+def _make_lf_run(
+    root: Path,
+    *,
+    variant: str,
+    tokens_per_sec: float = 9_500.0,
+    train_runtime: float = 1234.5,
+    train_loss: float = 4.2,
+    global_step: int = 3814,
+    with_tokens_per_sec: bool = True,
+    with_yaml: bool = True,
+) -> Path:
     run_dir = root / f"small_{variant}_lr3e4"
     run_dir.mkdir(parents=True)
 
@@ -245,7 +266,8 @@ def test_pair_runs_handles_unpaired_variants(tmp_path: Path):
 def test_render_markdown_contains_speedup_column(tmp_path: Path):
     lf_root = tmp_path / "lf"
     titan_root = tmp_path / "titan"
-    lf_root.mkdir(); titan_root.mkdir()
+    lf_root.mkdir()
+    titan_root.mkdir()
     _make_lf_run(lf_root, variant="baseline")
     _make_titan_run(titan_root, variant="baseline")
 
@@ -263,7 +285,8 @@ def test_render_markdown_contains_speedup_column(tmp_path: Path):
 def test_render_csv_writes_all_fields(tmp_path: Path):
     lf_root = tmp_path / "lf"
     titan_root = tmp_path / "titan"
-    lf_root.mkdir(); titan_root.mkdir()
+    lf_root.mkdir()
+    titan_root.mkdir()
     _make_lf_run(lf_root, variant="baseline")
     _make_titan_run(titan_root, variant="baseline")
     rows = tc.pair_runs(
@@ -285,17 +308,23 @@ def test_render_csv_writes_all_fields(tmp_path: Path):
 def test_main_writes_markdown_and_csv(tmp_path: Path, capsys):
     lf_root = tmp_path / "lf"
     titan_root = tmp_path / "titan"
-    lf_root.mkdir(); titan_root.mkdir()
+    lf_root.mkdir()
+    titan_root.mkdir()
     for variant in ("baseline", "mtp"):
         _make_lf_run(lf_root, variant=variant)
         _make_titan_run(titan_root, variant=variant)
 
     out_md = tmp_path / "report.md"
-    rc = tc.main([
-        "--lf_runs", str(lf_root),
-        "--titan_runs", str(titan_root),
-        "--out", str(out_md),
-    ])
+    rc = tc.main(
+        [
+            "--lf_runs",
+            str(lf_root),
+            "--titan_runs",
+            str(titan_root),
+            "--out",
+            str(out_md),
+        ]
+    )
     assert rc == 0
     assert out_md.exists()
     assert out_md.with_suffix(".csv").exists()

@@ -24,14 +24,14 @@ Dependency:
 
 Usage:
     python scripts/data_cleaning/dedup.py \\
-        --input_dir  /scratch/.../quality_filtered \\
-        --output_dir /scratch/.../deduped \\
+        --input_dir  /path/to/data \\
+        --output_dir /path/to/data \\
         --threshold  0.8
 
     # More aggressive dedup
     python scripts/data_cleaning/dedup.py \\
-        --input_dir  /scratch/.../quality_filtered \\
-        --output_dir /scratch/.../deduped_strict \\
+        --input_dir  /path/to/data \\
+        --output_dir /path/to/data \\
         --threshold  0.7 --num_perm 128
 """
 from __future__ import annotations

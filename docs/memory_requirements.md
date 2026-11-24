@@ -551,3 +551,14 @@ Effective Batch = batch_size × gradient_accumulation_steps × num_gpus
 ```
 
 For consistent training dynamics, maintain similar effective batch sizes across different hardware configurations.
+
+## AdamH memory profile (Delphi recipe)
+
+`AdamH` (`src/umich_slm/optim/adamh.py`) uses the same per-parameter state
+as `AdamW` (two moment buffers, one step counter) plus a single scalar
+per Hyperball-constrained tensor (the captured `init_norm`). Net VRAM
+delta vs `AdamW`: negligible (one float per tensor, not per element).
+
+The Hyperball projection step is in-place, so peak activation memory does
+not change either. If you are switching from `AdamW` to `AdamH`, you can
+reuse the same `--batch_size` / `--gradient_accumulation_steps`.

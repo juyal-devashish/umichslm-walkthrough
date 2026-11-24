@@ -226,8 +226,7 @@ class TestLoadBalancingLoss:
         total_loss = compute_moe_loss([output1, output2])
 
         expected = (
-            output1.aux_loss + output1.router_z_loss +
-            output2.aux_loss + output2.router_z_loss
+            output1.aux_loss + output1.router_z_loss + output2.aux_loss + output2.router_z_loss
         )
         assert torch.allclose(total_loss, expected)
 
@@ -309,7 +308,7 @@ class TestMoEModel:
 
         # Check that expert weights have gradients
         for layer in moe_model.model.layers:
-            for expert in layer.moe.moe.experts if hasattr(layer.moe, 'moe') else layer.moe.experts:
+            for expert in layer.moe.moe.experts if hasattr(layer.moe, "moe") else layer.moe.experts:
                 assert expert.gate_proj.weight.grad is not None
 
     def test_moe_model_save_load(self, moe_model, moe_config, tmp_path):
@@ -422,9 +421,9 @@ class TestProgressiveMoE:
         schedule = config.get_progressive_moe_schedule()
         for idx, layer in enumerate(model.model.layers):
             if schedule[idx] == 1:
-                assert not hasattr(layer, "moe"), (
-                    f"Layer {idx} has 1 expert but uses MoE decoder class"
-                )
+                assert not hasattr(
+                    layer, "moe"
+                ), f"Layer {idx} has 1 expert but uses MoE decoder class"
 
 
 class TestMoEMixedPrecision:
@@ -433,12 +432,16 @@ class TestMoEMixedPrecision:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_moe_fp16(self):
         """Test MoE with fp16 precision."""
-        moe = MoELayer(
-            hidden_size=64,
-            intermediate_size=128,
-            num_experts=4,
-            num_experts_per_tok=2,
-        ).cuda().half()
+        moe = (
+            MoELayer(
+                hidden_size=64,
+                intermediate_size=128,
+                num_experts=4,
+                num_experts_per_tok=2,
+            )
+            .cuda()
+            .half()
+        )
 
         hidden_states = torch.randn(2, 10, 64, dtype=torch.float16, device="cuda")
         output = moe(hidden_states)

@@ -3,7 +3,7 @@
 #
 # Typical usage:
 #   1. Create an initialized model checkpoint:
-#      python scripts/pretrain.py --size qwen3_like_small --dry_run --output_dir ./outputs/bootstrap --run_name toy1b_qwen3_like_small_init --tokenizer_path /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface/hub/models--HuggingFaceTB--SmolLM2-1.7B-Instruct/snapshots/31b70e2e869a7173562077fd711b654946d38674
+#      python scripts/pretrain.py --size qwen3_like_small --dry_run --output_dir ./outputs/bootstrap --run_name toy1b_qwen3_like_small_init --tokenizer_path /path/to/data
 #   2. Train:
 #      llamafactory-cli train configs/llama_factory/umichslm_pretrain.yaml
 
@@ -15,7 +15,7 @@ trust_remote_code: true
 
 ### Data Configuration ###
 # Shared toy pretraining dataset prepared by the data team.
-dataset_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/1B
+dataset_dir: /path/to/data
 
 # Mixture: web 60%, textbook 20%, code 10%, math 5%, math_reasoning 5%
 dataset: mix_code10_math5_math_reasoning5_textbook20_web60_train_1000M

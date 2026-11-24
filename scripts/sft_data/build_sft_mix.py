@@ -12,8 +12,8 @@ Factory's `file_name:` entries can load it directly.
 
 Usage:
     python scripts/sft_data/build_sft_mix.py \\
-        --input_dir /scratch/.../sft_data/v1/raw \\
-        --output_dir /scratch/.../sft_data/v1/sft_mix_80k
+        --input_dir /path/to/data \\
+        --output_dir /path/to/data
 """
 from __future__ import annotations
 

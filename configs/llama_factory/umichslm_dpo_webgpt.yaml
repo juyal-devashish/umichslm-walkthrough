@@ -5,24 +5,24 @@
 #
 # Prepare data first:
 #   python scripts/dpo_data/prepare_webgpt.py \
-#       --output_dir /scratch/.../dpo_data/v1/webgpt
+#       --output_dir /path/to/data
 #
 # Single run:
 #   llamafactory-cli train configs/llama_factory/umichslm_dpo_webgpt.yaml \
 #       model_name_or_path=<SFT_WINNER_DIR> \
 #       ref_model=<SFT_WINNER_DIR> \
 #       dpo_beta=0.1 \
-#       output_dir=/scratch/.../umichslm-dpo-webgpt-beta0.1
+#       output_dir=/path/to/data
 #
 # β sweep: copy local-slurm/dpo_beta_sweep.sh, change dataset to
 #          umichslm_dpo_webgpt_{train,val} and config to this file.
 
 ### Model Configuration ###
-model_name_or_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/PLACEHOLDER_SFT_WINNER
+model_name_or_path: /path/to/data
 trust_remote_code: true
 
 ### Reference Model ###
-ref_model: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/PLACEHOLDER_SFT_WINNER
+ref_model: /path/to/data
 
 ### Data Configuration ###
 dataset_dir: ./configs/llama_factory
@@ -43,8 +43,8 @@ dpo_loss: sigmoid
 dpo_ftx: 0.0
 
 ### Output Configuration ###
-output_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-dpo-webgpt-default
-logging_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-dpo-webgpt-default/tb
+output_dir: /path/to/data
+logging_dir: /path/to/data
 overwrite_output_dir: true
 
 ### Training Hyperparameters ###

@@ -449,3 +449,77 @@ class TestMoDAConfigValidation:
         input_ids = torch.randint(0, 1000, (2, 16))
         output = model(input_ids)
         assert output.logits.shape == (2, 16, 1000)
+
+
+class TestVectorizedMaskEquivalence:
+    """The vectorized ``build_moda_combined_mask`` must match the original
+    Python-loop construction bit for bit (Arm C profiling fix)."""
+
+    @staticmethod
+    def _reference_loop_mask(seq_len, depth_seq_len, num_depth_layers, device, dtype, past_len=0):
+        total_seq_kv_len = past_len + seq_len
+        total_kv_len = total_seq_kv_len + depth_seq_len
+        mask = torch.full((seq_len, total_kv_len), float("-inf"), device=device, dtype=dtype)
+        for i in range(seq_len):
+            mask[i, : past_len + i + 1] = 0.0
+        if depth_seq_len > 0 and num_depth_layers > 0:
+            orig = depth_seq_len // num_depth_layers
+            for i in range(seq_len):
+                qp = past_len + i
+                if qp < orig:
+                    for l in range(num_depth_layers):
+                        off = total_seq_kv_len + l * orig + qp
+                        if off < total_kv_len:
+                            mask[i, off] = 0.0
+        return mask.unsqueeze(0).unsqueeze(0)
+
+    @pytest.mark.parametrize(
+        "seq_len,depth_layers,past_len",
+        [(16, 3, 0), (16, 0, 0), (1, 4, 8), (7, 2, 3), (32, 5, 0)],
+    )
+    def test_matches_reference(self, seq_len, depth_layers, past_len):
+        depth_seq_len = depth_layers * (past_len + seq_len)
+        ref = self._reference_loop_mask(
+            seq_len, depth_seq_len, depth_layers, torch.device("cpu"), torch.float32, past_len
+        )
+        new = build_moda_combined_mask(
+            seq_len=seq_len,
+            depth_seq_len=depth_seq_len,
+            num_depth_layers=depth_layers,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+            past_len=past_len,
+        )
+        assert torch.equal(ref, new)
+
+    def test_mask_is_cached_per_shape(self):
+        a = build_moda_combined_mask(
+            seq_len=8,
+            depth_seq_len=16,
+            num_depth_layers=2,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+        )
+        b = build_moda_combined_mask(
+            seq_len=8,
+            depth_seq_len=16,
+            num_depth_layers=2,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+        )
+        assert a is b  # same object: built once per (shape, device, dtype)
+
+
+class TestMoDASweepArm:
+    """Arm C sweep integration: the ``moda_<size>`` presets must build and run."""
+
+    def test_moda_preset_builds_and_forwards(self):
+        from umich_slm.configs.presets import get_umichslm_config
+
+        cfg = get_umichslm_config("moda_10m", vocab_size=128)
+        assert cfg.use_moda
+        assert cfg.norm_placement == "post"  # MoDA reference design
+        model = UMichSLMForCausalLM(cfg)
+        input_ids = torch.randint(0, 128, (1, 12))
+        out = model(input_ids, labels=input_ids.clone())
+        assert out.loss is not None and torch.isfinite(out.loss)

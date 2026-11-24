@@ -5,6 +5,7 @@ import torch
 
 # Import the package (this also registers with AutoModel)
 import sys
+
 sys.path.insert(0, str(__file__).replace("/tests/conftest.py", "/src"))
 
 from umich_slm import UMichSLMConfig, UMichSLMForCausalLM, UMichSLMModel
@@ -66,8 +67,7 @@ def sample_input(tiny_config, reproducible_generator):
     seq_len = 16
     return {
         "input_ids": torch.randint(
-            0, tiny_config.vocab_size, (batch_size, seq_len),
-            generator=reproducible_generator
+            0, tiny_config.vocab_size, (batch_size, seq_len), generator=reproducible_generator
         ),
         "attention_mask": torch.ones(batch_size, seq_len, dtype=torch.long),
     }
@@ -79,8 +79,7 @@ def sample_input_with_labels(tiny_config, reproducible_generator):
     batch_size = 2
     seq_len = 16
     input_ids = torch.randint(
-        0, tiny_config.vocab_size, (batch_size, seq_len),
-        generator=reproducible_generator
+        0, tiny_config.vocab_size, (batch_size, seq_len), generator=reproducible_generator
     )
     return {
         "input_ids": input_ids,

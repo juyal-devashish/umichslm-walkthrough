@@ -9,14 +9,14 @@
   "mem": "64G",
   "output_dir": "/home/%u/umich-slm/slurm-logs",
   "output_pattern": "scaling-%j.out",
-  "account": "cse598s004w26_class",
+  "account": "<account>",
   "qos": null,
-  "mail_account": "vnagpal",
+  "mail_account": "user",
   "mail_type": "END,FAIL",
   "conda_env": "umich-slm",
   "modules": [],
   "env_vars": {
-    "HF_HOME": "/scratch/cse598s004w26_class_root/cse598s004w26_class/vnagpal/.cache/huggingface",
+    "HF_HOME": "/path/to/data",
     "TOKENIZERS_PARALLELISM": "false"
   },
   "host_env": {
@@ -37,5 +37,5 @@
   "dataset_dir": null,
   "eval_dataset": "fineweb_edu_1B_val",
   "dataset_configs": {},
-  "models_output_dir": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results"
+  "models_output_dir": "/path/to/data"
 }

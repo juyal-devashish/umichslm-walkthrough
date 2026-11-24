@@ -583,6 +583,7 @@ class TestMTPEdgeCases:
     def test_mtp_backward_compat_old_api(self, mtp_config, embedding_layer, lm_head):
         """Test backward compatibility with old API (deprecated but supported)."""
         import warnings
+
         mtp = MultiTokenPrediction(
             config=mtp_config,
             embed_tokens=embedding_layer,
@@ -638,6 +639,75 @@ class TestMTPDisabled:
         input_ids = torch.randint(0, 1000, (2, 32))
         labels = input_ids.clone()
 
+        # With labels, the loss is computed chunk-wise and the full (B, T, V)
+        # logits tensor is deliberately never materialized -> logits is None.
         outputs = regular_model(input_ids, labels=labels)
         assert outputs.loss is not None
+        assert outputs.logits is None
+
+        # ...unless the caller explicitly pays for them.
+        outputs = regular_model(input_ids, labels=labels, output_logits=True)
+        assert outputs.loss is not None
         assert outputs.logits.shape == (2, 32, 1000)
+
+        # No labels -> logits always returned.
+        outputs = regular_model(input_ids)
+        assert outputs.logits.shape == (2, 32, 1000)
+
+
+class TestCandidateMTPTwins:
+    """The `<arch>_mtp` sweep twins of the five candidate bank-arms.
+
+    `_sweep_arch_flags` grows an MTP twin for ANY arm via the `_mtp` suffix, so
+    the pair differs by exactly one thing: the MTP heads. Pinned here because a
+    silently-inert MTP flag would make the "does MTP pay for itself" comparison
+    meaningless (the knob-reached-the-model rule in CLAUDE.md).
+    """
+
+    BASES = [
+        "swa_hybrid32",
+        "swa_deltabank",
+        "swa_scribe",
+        "swa_scribe_mopd",
+        "swa_scribe_mopd_delta",
+    ]
+
+    @pytest.mark.parametrize("base", BASES)
+    def test_mtp_flags_and_matched_shape(self, base):
+        from umich_slm.configs.presets import get_umichslm_config
+
+        cb = get_umichslm_config(f"{base}_25m")
+        cm = get_umichslm_config(f"{base}_mtp_25m")
+        assert not getattr(cb, "use_mtp", False)  # base twin has MTP OFF
+        assert cm.use_mtp and cm.mtp_num_heads == 1 and cm.mtp_share_head
+        assert cm.mtp_loss_weight == pytest.approx(0.3)
+        # Identical backbone: the twin differs ONLY by the MTP heads.
+        for k in (
+            "hidden_size",
+            "num_hidden_layers",
+            "num_attention_heads",
+            "intermediate_size",
+            "swa_window",
+            "swa_global_count",
+        ):
+            assert getattr(cb, k) == getattr(cm, k), k
+        # Bank/backbone mechanism flags are carried through unchanged.
+        for k in ("use_delta_bank", "use_scribe_bank", "use_pathways", "use_mod"):
+            assert getattr(cb, k, False) == getattr(cm, k, False), k
+
+    def test_mtp_module_present_and_trains(self):
+        from umich_slm.configs.presets import get_umichslm_config
+
+        cfg = get_umichslm_config("swa_hybrid32_mtp_25m", vocab_size=256)
+        m = UMichSLMForCausalLM(cfg)
+        assert any("mtp" in n.lower() for n, _ in m.named_modules())
+        ids = torch.randint(0, 256, (1, 64))
+        out = m(input_ids=ids, labels=ids.clone())
+        assert torch.isfinite(out.loss)
+        out.loss.backward()
+        mtp_grad = sum(
+            float(p.grad.abs().sum())
+            for n, p in m.named_parameters()
+            if "mtp" in n.lower() and p.grad is not None
+        )
+        assert mtp_grad > 0.0  # MTP heads actually receive gradient

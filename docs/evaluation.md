@@ -172,3 +172,42 @@ The two scripts compute everything from the same three running totals
 (`sum_nll_nats`, `total_pred_tokens`, `total_bytes_utf8`) in
 `eval_utils.score_texts()`, so numbers from the two scripts on the same
 text are internally consistent.
+
+## Downstream-benchmark soft metrics (Delphi)
+
+Hard benchmark scores are at chance for 50M–100M models, but the
+underlying **soft** metric scales smoothly with compute. The scaling-law
+plotter (`scripts/plot_benchmark_scaling.py`) consumes a JSONL of per-run
+eval results with this schema:
+
+```json
+{"run_id": "...", "arch": "...", "params": 1e8, "tokens": 1e9, "flops": 6e17,
+ "benchmark": "mmlu", "soft": 0.42, "hard": 0.25}
+```
+
+### Soft metric definitions
+
+* **Log-prob** family (MMLU, HellaSwag, ARC, PIQA, BBH-MC, MuSR, LogiQA,
+  GPQA-Diamond, MC-converted AgentBench/WebArena): mean
+  `log P(correct option) − log Σ_i P(option_i)` across examples.
+* **Bits-per-byte** family (GSM8K, HumanEval): BPB on the reference
+  completion. Lower = better; sign-flip when computing the sigmoid.
+
+### Soft → hard mapping
+
+A sigmoid `hard = 1 / (1 + exp(-k·(soft − s₀)))` is fit on the external
+reference pool in `evals/reference_models.json` (Llama / Qwen / OLMo at
+multiple sizes). Edit that file to add new reference models; the plotter
+re-fits automatically. The pool deliberately spans multiple training
+recipes so the sigmoid is not dominated by one family.
+
+### MC conversion for agentic benchmarks
+
+AgentBench and WebArena trajectories are converted to MC by
+`evals/agentbench_mc.py`. Each step becomes an MC example with the
+expert action at option 0 and `K` distractor actions sampled from the
+trajectory's neighborhood. The soft metric is then log-prob of the
+expert action; the hard metric is per-step argmax accuracy.
+
+See `docs/scaling_experiments.md § Downstream-benchmark scaling` for how
+the plotter ties this back to the IsoFLOP analysis.

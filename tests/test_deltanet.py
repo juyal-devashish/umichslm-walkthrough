@@ -244,8 +244,9 @@ class TestHybridLayerSelection:
         )
 
         for layer_idx in range(8):
-            assert _should_use_deltanet(config, layer_idx), \
-                f"Layer {layer_idx} should use DeltaNet with default settings"
+            assert _should_use_deltanet(
+                config, layer_idx
+            ), f"Layer {layer_idx} should use DeltaNet with default settings"
 
     def test_all_deltanet_explicit_zero(self):
         """Test all layers use DeltaNet when explicitly set to every_n=0."""
@@ -272,7 +273,9 @@ class TestHybridLayerSelection:
         expected = [True, True, True, False, True, True, True, False]
         for layer_idx in range(8):
             result = _should_use_deltanet(config, layer_idx)
-            assert result == expected[layer_idx], f"Layer {layer_idx}: expected {expected[layer_idx]}, got {result}"
+            assert (
+                result == expected[layer_idx]
+            ), f"Layer {layer_idx}: expected {expected[layer_idx]}, got {result}"
 
     def test_hybrid_attention_ratio(self):
         """Test explicit hybrid pattern with ratio list."""
@@ -548,8 +551,11 @@ class TestDeltaNetIncrementalDecoding:
             _, _, cache = deltanet(x, use_cache=True)
 
             assert cache.conv_state is not None
-            assert cache.conv_state.shape == (batch_size, hidden_size, kernel_size - 1), \
-                f"Conv state shape wrong for seq_len={seq_len}"
+            assert cache.conv_state.shape == (
+                batch_size,
+                hidden_size,
+                kernel_size - 1,
+            ), f"Conv state shape wrong for seq_len={seq_len}"
 
     def test_incremental_kda(self):
         """Test incremental decoding for KimiDeltaAttention (channel-wise gating)."""

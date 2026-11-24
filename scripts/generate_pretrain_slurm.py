@@ -64,6 +64,24 @@ def build_pretrain_command(run: dict[str, Any], config: dict[str, Any]) -> list[
         cmd.append("--config_only")
     if training.get("dry_run"):
         cmd.append("--dry_run")
+
+    # Token-Superposition Training (TST). Surfaced as ``training.tst.*`` /
+    # sweepable as ``tst_enabled`` / ``tst_bag_size`` / ``tst_recovery_ratio``.
+    tst_cfg = training.get("tst", {}) if isinstance(training.get("tst"), dict) else {}
+    tst_enabled = run.get("tst_enabled", tst_cfg.get("enabled", False))
+    if tst_enabled:
+        cmd.append("--tst_enabled")
+        _flag(cmd, "--tst_bag_size", run.get("tst_bag_size", tst_cfg.get("bag_size")))
+        _flag(
+            cmd,
+            "--tst_recovery_ratio",
+            run.get("tst_recovery_ratio", tst_cfg.get("recovery_ratio")),
+        )
+        _flag(
+            cmd,
+            "--tst_loss_weighting",
+            run.get("tst_loss_weighting", tst_cfg.get("loss_weighting")),
+        )
     return [str(part) for part in cmd]
 
 

@@ -25,8 +25,9 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
-from .rotary import RotaryEmbedding, PolarPositionEmbedding
+from .attn_sink import extend_kv_with_sink, flash_attn_with_lse, flash_attn_with_sink
 from .repo import RePoPositionPredictor, RePoPositionPredictorWithBase
+from .rotary import PolarPositionEmbedding, RotaryEmbedding
 from .sliding_window import (
     create_sliding_window_mask,
     is_global_attention_layer,
@@ -59,6 +60,20 @@ def _get_unpad_data(attention_mask: torch.Tensor):
     return indices, cu_seqlens, max_seqlen_in_batch
 
 
+def _past_length(past_key_value, layer_idx: int) -> int:
+    """Tokens already held for `layer_idx`, for a `Cache`, a legacy tuple, or None.
+
+    HF's `Cache` is not subscriptable and its length is per layer (a windowed layer
+    may hold fewer tokens than a global one), so the legacy `past[0].shape[2]` is
+    both a TypeError and, where it works, the wrong number.
+    """
+    if past_key_value is None:
+        return 0
+    if hasattr(past_key_value, "get_seq_length"):
+        return int(past_key_value.get_seq_length(layer_idx))
+    return int(past_key_value[0].shape[2])
+
+
 class UMichSLMAttention(nn.Module):
     """Multi-head attention with RoPE/PoPE and Flash Attention 2 support.
 
@@ -84,10 +99,23 @@ class UMichSLMAttention(nn.Module):
         is used instead.
     """
 
+    # Full-attention layers may carry an attn_logit_sink; the SWA families set this
+    # False (their sinks live in swa_scribe's window-LSE merge instead).
+    _full_attention_kind = True
+
     def __init__(self, config, layer_idx: Optional[int] = None):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
+
+        # Intra-document masking (W2) side channels, set by the model per forward.
+        #   _intra_doc_cu_seqlens / _intra_doc_max_seqlen: FA2 varlen block-diagonal boundaries
+        #     (set only when there is NO per-sequence prefix; None => dense causal FA2).
+        #   _intra_doc_force_sdpa: True when a shared prefix (globals/meta) is present under
+        #     FA2 — varlen can't carry a shared prefix, so defer to the SDPA additive-mask path.
+        self._intra_doc_cu_seqlens = None
+        self._intra_doc_max_seqlen = None
+        self._intra_doc_force_sdpa = False
 
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
@@ -101,19 +129,56 @@ class UMichSLMAttention(nn.Module):
         self.sliding_window = getattr(config, "sliding_window", None)
         self.global_attention_every_n_layers = getattr(config, "global_attention_every_n_layers", 4)
 
-        # Determine if this layer uses global or local attention
+        # Determine if this layer uses global or local attention. A per-layer
+        # hybrid schedule, when present, designates the full-context layer
+        # directly (see is_global_attention_layer).
         if self.sliding_window is not None and layer_idx is not None:
             self.use_sliding_window = not is_global_attention_layer(
-                layer_idx, self.global_attention_every_n_layers
+                layer_idx,
+                self.global_attention_every_n_layers,
+                getattr(config, "hybrid_attention_ratio", None),
             )
         else:
             self.use_sliding_window = False
+
+        # global_layer_window (2026-08-25): band the FULL-ATTENTION layers.
+        #
+        # In the swa_globals_mla schedule the periodic "mla"/"attn" layers are the
+        # only unbounded ones, so they carry the entire O(S^2) term -- 6 of 23 layers
+        # at ar10m, and individually HEAVIER than a dense layer because MLA runs a
+        # 192-dim QK against dense's head_dim 64. Capping them at a wide band keeps a
+        # long-but-finite reach while removing the quadratic growth; the register bank
+        # already supplies the position-free global path, so the unbounded reach may
+        # be redundant. None (default) = unbounded, i.e. exactly the previous
+        # behaviour, so this flag is bitwise inert unless set.
+        _gw = getattr(config, "global_layer_window", None)
+        if _gw is not None and layer_idx is not None and not self.use_sliding_window:
+            if int(_gw) <= 0:
+                raise ValueError(f"global_layer_window must be > 0 or None, got {_gw!r}")
+            self.use_sliding_window = True
+            self.sliding_window = int(_gw)
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
                 f"hidden_size must be divisible by num_heads "
                 f"(got hidden_size={self.hidden_size} and num_heads={self.num_heads})"
             )
+
+        # attn_logit_sinks (2026-10-27): a learned per-head sink logit on a
+        # FULL-attention layer (modules/attn_sink.py). Distinct from
+        # use_logit_sinks, which only ever reached the SWA scribe layers -- reusing
+        # that name would silently add sinks to the globals of every banked
+        # swa_sinkdiet-family arm. The SWA classes opt out via _full_attention_kind.
+        # Init 0.0 as in swa_scribe, so this is a distinct arch, not an inert flag.
+        self.attn_logit_sink = (
+            nn.Parameter(torch.zeros(self.num_heads))
+            if getattr(config, "attn_logit_sinks", False) and self._full_attention_kind
+            else None
+        )
+        # swa_lse_grad_exact (default True since 7c28e10): the window-LSE merge's FA2
+        # branch uses attn_sink.flash_attn_with_lse. False reproduces the pre-fix
+        # training (flash-attn's LSE, gradient dropped) for same-commit controls only.
+        self._lse_grad_exact = bool(getattr(config, "swa_lse_grad_exact", True))
 
         # Q, K, V projections
         self.q_proj = nn.Linear(
@@ -137,6 +202,12 @@ class UMichSLMAttention(nn.Module):
             bias=getattr(config, "attention_bias", False),
         )
 
+        # Partial RoPE (``partial_rotary_factor``): RotaryEmbedding rotates the leading
+        # ``rotary_dim`` dims of each head and passes the rest through, so every forward
+        # path below gets it from the one ``self.rotary_emb(...)`` call. 0 means NoPE.
+        prf = getattr(config, "partial_rotary_factor", None)
+        self.rotary_dim = int(self.head_dim * (1.0 if prf is None else float(prf))) // 2 * 2
+
         # Position embeddings (RoPE or PoPE)
         pos_type = getattr(config, "position_embedding_type", "rope")
         if pos_type == "pope":
@@ -148,7 +219,7 @@ class UMichSLMAttention(nn.Module):
         else:
             rope_scaling = getattr(config, "rope_scaling", None) or {}
             self.rotary_emb = RotaryEmbedding(
-                self.head_dim,
+                self.rotary_dim or self.head_dim,
                 max_position_embeddings=self.max_position_embeddings,
                 base=getattr(config, "rope_theta", 10000.0),
                 scaling_factor=rope_scaling.get("factor", 1.0),
@@ -156,6 +227,9 @@ class UMichSLMAttention(nn.Module):
                 yarn_beta_fast=rope_scaling.get("beta_fast", 32.0),
                 yarn_beta_slow=rope_scaling.get("beta_slow", 1.0),
                 yarn_mscale=rope_scaling.get("mscale", 1.0),
+                original_max_position_embeddings=rope_scaling.get(
+                    "original_max_position_embeddings"
+                ),
             )
 
         # Cache PoPE check to avoid isinstance() on every forward pass
@@ -167,6 +241,12 @@ class UMichSLMAttention(nn.Module):
         # When drope_enabled=True, position embeddings are skipped entirely
         # This is toggled during training after drope_drop_fraction of steps
         self.drope_enabled = False
+
+        # NoPE (SmolLM3 / Yang et al. 2025): position encoding is removed from
+        # this layer *statically*, for the whole run — unlike DRoPE, which is a
+        # mid-training schedule. Set by the model from ``nope_every_n_layers``, or here
+        # for every layer when ``partial_rotary_factor`` leaves no dims to rotate.
+        self.nope = self.rotary_dim == 0
 
         # RePo (Re-Positioning) support - learned continuous positions
         self.use_repo = getattr(config, "use_repo", False)
@@ -203,6 +283,8 @@ class UMichSLMAttention(nn.Module):
         output_attentions: bool = False,
         use_cache: bool = False,
         depth_kv_cache=None,
+        precomputed_q: Optional[torch.Tensor] = None,
+        pre_o_add: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for attention.
 
@@ -224,7 +306,11 @@ class UMichSLMAttention(nn.Module):
         bsz, q_len, _ = hidden_states.size()
 
         # Project to Q, K, V
-        query_states = self.q_proj(hidden_states)
+        # precomputed_q: a caller that already needed q_proj(hidden_states) for its
+        # own branch (RegisterReadMixin's bank read) hands it in rather than making
+        # this layer recompute the same GEMM. Same tensor, same graph -- the fork
+        # is BEFORE q_norm/RoPE, which is exactly where the bank read reads from.
+        query_states = self.q_proj(hidden_states) if precomputed_q is None else precomputed_q
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
@@ -238,7 +324,7 @@ class UMichSLMAttention(nn.Module):
         ).transpose(1, 2)
 
         # Apply position embeddings (RoPE or PoPE) unless DRoPE is active
-        if not self.drope_enabled:
+        if not self.drope_enabled and not self.nope:
             if position_ids is None:
                 # Determine past length from cache
                 if past_key_value is not None:
@@ -333,6 +419,18 @@ class UMichSLMAttention(nn.Module):
                 else:
                     attention_mask = swa_mask
 
+            # Out-of-sequence bank hook (swa_scribe): subclasses may append bank
+            # keys/values + mask columns so SDPA/eager/MoD-ext paths compute the
+            # joint softmax natively. Base implementation is a strict no-op.
+            key_states_expanded, value_states_expanded, attention_mask = self._extend_bank_kv(
+                hidden_states,
+                query_states,
+                key_states_expanded,
+                value_states_expanded,
+                attention_mask,
+                q_len,
+            )
+
             # Choose attention implementation
             attn_implementation = getattr(self.config, "_attn_implementation", "eager")
 
@@ -346,7 +444,16 @@ class UMichSLMAttention(nn.Module):
                     self._pope_warning_logged = True
                 attn_implementation = "eager"
 
-            if attn_implementation == "flash_attention_2" and FLASH_ATTENTION_AVAILABLE:
+            # SWA-with-globals sets a prebuilt FlexAttention BlockMask on the
+            # module (see swa_with_globals.py); when present it takes priority and
+            # runs the fused block-sparse kernel. Inert (None) for every other arch.
+            flex_block_mask = getattr(self, "_flex_block_mask", None)
+            if flex_block_mask is not None:
+                attn_output = self._flex_attention_forward(
+                    query_states, key_states_expanded, value_states_expanded, flex_block_mask
+                )
+                attn_weights = None
+            elif attn_implementation == "flash_attention_2" and FLASH_ATTENTION_AVAILABLE:
                 attn_output = self._flash_attention_forward(
                     query_states, key_states_expanded, value_states_expanded, attention_mask, q_len
                 )
@@ -368,6 +475,11 @@ class UMichSLMAttention(nn.Module):
         # Reshape and project output
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+        # pre_o_add: o_proj is bias-free here, so o_proj(a) + o_proj(b) == o_proj(a+b).
+        # A side branch that would otherwise run its own full o_proj GEMM adds into
+        # the pre-projection sum instead -- one output projection per layer, not two.
+        if pre_o_add is not None:
+            attn_output = attn_output + pre_o_add
         attn_output = self.o_proj(attn_output)
 
         return attn_output, attn_weights, present_key_value
@@ -531,6 +643,24 @@ class UMichSLMAttention(nn.Module):
 
         return attn_output.transpose(1, 2)
 
+    def _flex_attention_forward(
+        self,
+        query_states: torch.Tensor,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        block_mask,
+    ) -> torch.Tensor:
+        """FlexAttention forward with a prebuilt ``BlockMask``.
+
+        Used by the SWA-with-globals layer to run the globals+sliding-window
+        pattern as a fused, block-sparse (Triton) kernel instead of full-O(seq^2)
+        SDPA over a materialized dense mask. q/k/v are [B, H, S, D] with KV
+        already GQA-expanded; default scale is 1/sqrt(head_dim), matching SDPA.
+        """
+        from .flex_swa import flex_sdpa
+
+        return flex_sdpa(query_states, key_states, value_states, block_mask)
+
     def _sdpa_attention_forward(
         self,
         query_states: torch.Tensor,
@@ -651,6 +781,22 @@ class UMichSLMAttention(nn.Module):
 
         return attn_output, attn_weights
 
+    def _extend_bank_kv(
+        self, hidden_states, query_states, key_states, value_states, attention_mask, q_len
+    ):
+        """Hook for out-of-sequence bank keys (swa_scribe). Base: the attn_logit_sink
+        column when this layer has one, else a strict no-op."""
+        if self.attn_logit_sink is None:
+            return key_states, value_states, attention_mask
+        if getattr(self.config, "_attn_implementation", "eager") == "flash_attention_2":
+            # Only reached through UMichSLMFlashAttention2's fallbacks (output_attentions,
+            # PoPE, MoDA), none of which the sink arms use; the FA2 path proper applies
+            # the sink in its own forward.
+            raise NotImplementedError("attn_logit_sinks on the base-class FA2 fallback")
+        return extend_kv_with_sink(
+            key_states, value_states, attention_mask, self.attn_logit_sink, q_len
+        )
+
     @staticmethod
     def _repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
         """Repeat KV heads for grouped-query attention.
@@ -698,6 +844,8 @@ class UMichSLMFlashAttention2(UMichSLMAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         depth_kv_cache=None,
+        precomputed_q: Optional[torch.Tensor] = None,
+        pre_o_add: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass using Flash Attention 2.
 
@@ -708,6 +856,8 @@ class UMichSLMFlashAttention2(UMichSLMAttention):
         # - output_attentions: Flash Attention doesn't support attention weights output
         # - PoPE: head_dim doubling is incompatible with Flash Attention
         # - MoDA: FA2 can't handle arbitrary masks needed for depth attention
+        # - intra-doc masking with a shared prefix: varlen can't express globals/meta visible
+        #   across documents, so route to the base SDPA path (additive mask handles it).
         if output_attentions or self._use_pope or depth_kv_cache is not None:
             return super().forward(
                 hidden_states,
@@ -717,12 +867,35 @@ class UMichSLMFlashAttention2(UMichSLMAttention):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 depth_kv_cache=depth_kv_cache,
+                precomputed_q=precomputed_q,
+                pre_o_add=pre_o_add,
             )
+        if self._intra_doc_force_sdpa:
+            prev_impl = getattr(self.config, "_attn_implementation", "eager")
+            self.config._attn_implementation = "sdpa"
+            try:
+                return super().forward(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    depth_kv_cache=depth_kv_cache,
+                    precomputed_q=precomputed_q,
+                    pre_o_add=pre_o_add,
+                )
+            finally:
+                self.config._attn_implementation = prev_impl
 
         bsz, q_len, _ = hidden_states.size()
 
         # Project to Q, K, V
-        query_states = self.q_proj(hidden_states)
+        # precomputed_q: a caller that already needed q_proj(hidden_states) for its
+        # own branch (RegisterReadMixin's bank read) hands it in rather than making
+        # this layer recompute the same GEMM. Same tensor, same graph -- the fork
+        # is BEFORE q_norm/RoPE, which is exactly where the bank read reads from.
+        query_states = self.q_proj(hidden_states) if precomputed_q is None else precomputed_q
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
@@ -736,9 +909,9 @@ class UMichSLMFlashAttention2(UMichSLMAttention):
         ).transpose(1, 2)
 
         # Apply position embeddings unless DRoPE is active
-        if not self.drope_enabled:
+        if not self.drope_enabled and not self.nope:
             if position_ids is None:
-                past_len = past_key_value[0].shape[2] if past_key_value is not None else 0
+                past_len = _past_length(past_key_value, self.layer_idx)
                 position_ids = (
                     torch.arange(past_len, past_len + q_len, device=hidden_states.device)
                     .unsqueeze(0)
@@ -758,16 +931,36 @@ class UMichSLMFlashAttention2(UMichSLMAttention):
                 query_states, key_states = self.rotary_emb(query_states, key_states, position_ids)
         # When drope_enabled=True, query_states and key_states are used without position encoding
 
-        # Handle KV cache
+        # Handle KV cache. Capture whether there is *incoming* past context BEFORE the line
+        # below reassigns past_key_value to the output cache — the varlen path below is valid
+        # only on a full sequence (prefill / training), not incremental decoding.
+        #
+        # HF hands `.generate()` a `Cache` object, never the legacy (k, v) tuple, and a
+        # Cache is not subscriptable -- indexing it here raised `'DynamicCache' object is
+        # not subscriptable` for EVERY arch under flash_attention_2, dense included. The
+        # eager/SDPA parent has always branched on `hasattr(.., "update")`; mirror it.
+        # A Cache is updated in place, so the *same object* is what this layer returns.
+        no_past_context = _past_length(past_key_value, self.layer_idx) == 0
         if past_key_value is not None:
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
+            if hasattr(past_key_value, "update"):
+                key_states, value_states = past_key_value.update(
+                    key_states, value_states, self.layer_idx
+                )
+            else:
+                key_states = torch.cat([past_key_value[0], key_states], dim=2)
+                value_states = torch.cat([past_key_value[1], value_states], dim=2)
 
-        past_key_value = (key_states, value_states) if use_cache else None
+        if not use_cache:
+            past_key_value = None
+        elif not hasattr(past_key_value, "update"):
+            past_key_value = (key_states, value_states)
 
-        # Repeat KV for GQA
-        key_states = self._repeat_kv(key_states, self.num_key_value_groups)
-        value_states = self._repeat_kv(value_states, self.num_key_value_groups)
+        # GQA: do NOT expand K/V here. flash_attn_(varlen_)func supports grouped
+        # query attention natively (num_heads_q a multiple of num_heads_k), so
+        # passing the unexpanded [.., H_kv, ..] K/V avoids the 3:1-5:1 repeat_kv
+        # materialization + copy every layer. Only the SDPA/eager fallbacks (other
+        # classes) still expand. The KV cache above already stored the unexpanded
+        # K/V (standard), so this is unchanged for decode.
 
         # Transpose for flash attention: [batch, seq, heads, head_dim]
         query_states = query_states.transpose(1, 2)
@@ -789,15 +982,115 @@ class UMichSLMFlashAttention2(UMichSLMAttention):
         if self.use_sliding_window and self.sliding_window is not None:
             window_size_param = (self.sliding_window, 0)  # Left window only for causal
 
-        # Flash attention with optional sliding window
-        attn_output = flash_attn_func(
-            query_states,
-            key_states,
-            value_states,
-            dropout_p=self.attention_dropout if self.training else 0.0,
-            causal=q_len != 1,
-            window_size=window_size_param,
-        )
+        # swa_scribe: request the window branch's LSE so out-of-sequence bank
+        # branches can be joined by an exact log-sum-exp merge (joint softmax).
+        want_lse = getattr(self, "_wants_window_lse", False)
+        window_lse = None
+
+        cu_seqlens = self._intra_doc_cu_seqlens
+        if cu_seqlens is not None and no_past_context:
+            # Intra-document masking (W2): varlen FlashAttention runs an independent causal
+            # attention within each packed document (segment of cu_seqlens), never crossing a
+            # boundary — the O(S)-memory equivalent of the block-diagonal additive mask. RoPE
+            # positions were already reset per document upstream, so each segment is self-
+            # contained. Requires q_len == kv_len (training, no cache).
+            bsz_, s_, h_, d_ = query_states.shape
+            hkv_ = key_states.shape[2]  # unexpanded KV heads (GQA-native flash)
+            max_seqlen = int(self._intra_doc_max_seqlen)
+            cu_seqlens = cu_seqlens.to(query_states.device)
+            # Self-enforce the non-local invariant a compact MoD member would break
+            # (see UMichSLMModel._run_gathered_mod_block): the full-S cu_seqlens must
+            # span exactly this buffer's rows, else a compact [B*k,...] buffer reads
+            # past the end. A compact member must set _intra_doc_force_sdpa=True.
+            # Skipped under compile (int(cu[-1]) is a host sync -> graph break).
+            if not torch.compiler.is_compiling():
+                assert int(cu_seqlens[-1]) == bsz_ * s_, (
+                    f"stale intra-doc cu_seqlens: cu[-1]={int(cu_seqlens[-1])} but buffer "
+                    f"has {bsz_ * s_} rows (bsz={bsz_}, q_len={s_}) -- a compact/gathered "
+                    "member must set _intra_doc_force_sdpa=True instead of taking varlen"
+                )
+            if self.attn_logit_sink is not None:
+                result = flash_attn_with_sink(
+                    query_states.reshape(bsz_ * s_, h_, d_),
+                    key_states.reshape(bsz_ * s_, hkv_, d_),
+                    value_states.reshape(bsz_ * s_, hkv_, d_),
+                    self.attn_logit_sink,
+                    window=window_size_param,
+                    cu_seqlens=cu_seqlens,
+                    max_seqlen=max_seqlen,
+                )
+            elif want_lse and self._lse_grad_exact:
+                # The window LSE feeds swa_scribe's exact merge, so it must carry its
+                # gradient; flash_attn_varlen_func's returned LSE does not (attn_sink.py).
+                result = flash_attn_with_lse(
+                    query_states.reshape(bsz_ * s_, h_, d_),
+                    key_states.reshape(bsz_ * s_, hkv_, d_),
+                    value_states.reshape(bsz_ * s_, hkv_, d_),
+                    window=window_size_param,
+                    cu_seqlens=cu_seqlens,
+                    max_seqlen=max_seqlen,
+                )
+            else:
+                result = flash_attn_varlen_func(
+                    query_states.reshape(bsz_ * s_, h_, d_),
+                    key_states.reshape(bsz_ * s_, hkv_, d_),
+                    value_states.reshape(bsz_ * s_, hkv_, d_),
+                    cu_seqlens_q=cu_seqlens,
+                    cu_seqlens_k=cu_seqlens,
+                    max_seqlen_q=max_seqlen,
+                    max_seqlen_k=max_seqlen,
+                    dropout_p=self.attention_dropout if self.training else 0.0,
+                    causal=True,
+                    window_size=window_size_param,
+                    return_attn_probs=want_lse,  # only the swa_lse_grad_exact=False control
+                )
+            if want_lse:
+                attn_output, window_lse = result[0], result[1]
+                # varlen lse is [h, total_q] (defensively slice version padding);
+                # packing is row-major b*s -> [b, h, s].
+                window_lse = window_lse[..., : bsz_ * s_].view(h_, bsz_, s_).permute(1, 0, 2)
+            else:
+                attn_output = result
+            attn_output = attn_output.reshape(bsz_, s_, h_, d_)
+        else:
+            # Flash attention with optional sliding window
+            if self.attn_logit_sink is not None:
+                result = flash_attn_with_sink(
+                    query_states,
+                    key_states,
+                    value_states,
+                    self.attn_logit_sink,
+                    causal=q_len != 1,
+                    window=window_size_param,
+                )
+            elif want_lse and self._lse_grad_exact:
+                result = flash_attn_with_lse(
+                    query_states,
+                    key_states,
+                    value_states,
+                    causal=q_len != 1,
+                    window=window_size_param,
+                )
+            else:
+                result = flash_attn_func(
+                    query_states,
+                    key_states,
+                    value_states,
+                    dropout_p=self.attention_dropout if self.training else 0.0,
+                    causal=q_len != 1,
+                    window_size=window_size_param,
+                    return_attn_probs=want_lse,  # only the swa_lse_grad_exact=False control
+                )
+            if want_lse:
+                attn_output, window_lse = result[0], result[1]
+                window_lse = window_lse[..., :q_len]  # [b, h, s]
+            else:
+                attn_output = result
+
+        if want_lse:
+            attn_output = self._merge_bank_branches(
+                query_states, attn_output, window_lse, key_states, value_states
+            )
 
         # Convert back to original dtype if needed
         if attn_output.dtype != original_dtype:
@@ -805,6 +1098,11 @@ class UMichSLMFlashAttention2(UMichSLMAttention):
 
         # Reshape and project
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+        # pre_o_add: o_proj is bias-free here, so o_proj(a) + o_proj(b) == o_proj(a+b).
+        # A side branch that would otherwise run its own full o_proj GEMM adds into
+        # the pre-projection sum instead -- one output projection per layer, not two.
+        if pre_o_add is not None:
+            attn_output = attn_output + pre_o_add
         attn_output = self.o_proj(attn_output)
 
         return attn_output, None, past_key_value
@@ -826,6 +1124,8 @@ class UMichSLMSdpaAttention(UMichSLMAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         depth_kv_cache=None,
+        precomputed_q: Optional[torch.Tensor] = None,
+        pre_o_add: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass using SDPA."""
         # Fall back to base class for unsupported cases:
@@ -841,11 +1141,17 @@ class UMichSLMSdpaAttention(UMichSLMAttention):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 depth_kv_cache=depth_kv_cache,
+                precomputed_q=precomputed_q,
+                pre_o_add=pre_o_add,
             )
 
         bsz, q_len, _ = hidden_states.size()
 
-        query_states = self.q_proj(hidden_states)
+        # precomputed_q: a caller that already needed q_proj(hidden_states) for its
+        # own branch (RegisterReadMixin's bank read) hands it in rather than making
+        # this layer recompute the same GEMM. Same tensor, same graph -- the fork
+        # is BEFORE q_norm/RoPE, which is exactly where the bank read reads from.
+        query_states = self.q_proj(hidden_states) if precomputed_q is None else precomputed_q
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
@@ -858,7 +1164,7 @@ class UMichSLMSdpaAttention(UMichSLMAttention):
         ).transpose(1, 2)
 
         # Apply position embeddings unless DRoPE is active
-        if not self.drope_enabled:
+        if not self.drope_enabled and not self.nope:
             if position_ids is None:
                 # Determine past length from cache
                 if past_key_value is not None:
@@ -930,6 +1236,11 @@ class UMichSLMSdpaAttention(UMichSLMAttention):
             else:
                 attention_mask = swa_mask
 
+        if self.attn_logit_sink is not None:
+            key_states, value_states, attention_mask = extend_kv_with_sink(
+                key_states, value_states, attention_mask, self.attn_logit_sink, q_len
+            )
+
         # Use SDPA
         is_causal = attention_mask is None and q_len > 1
 
@@ -944,6 +1255,11 @@ class UMichSLMSdpaAttention(UMichSLMAttention):
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+        # pre_o_add: o_proj is bias-free here, so o_proj(a) + o_proj(b) == o_proj(a+b).
+        # A side branch that would otherwise run its own full o_proj GEMM adds into
+        # the pre-projection sum instead -- one output projection per layer, not two.
+        if pre_o_add is not None:
+            attn_output = attn_output + pre_o_add
         attn_output = self.o_proj(attn_output)
 
         return attn_output, None, present_key_value

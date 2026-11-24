@@ -24,7 +24,7 @@ pip install -e .
 Results directory:
 
 ```bash
-export SCRATCH="/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data"
+export SCRATCH="/path/to/data"
 mkdir -p "$SCRATCH/results/$USER"
 ```
 
@@ -51,5 +51,5 @@ full collaborator guide.
 The scripts already set `HF_HOME` to shared scratch. If you hit home directory quota issues elsewhere, ensure this is set:
 
 ```bash
-export HF_HOME="/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface"
+export HF_HOME="/path/to/data"
 ```

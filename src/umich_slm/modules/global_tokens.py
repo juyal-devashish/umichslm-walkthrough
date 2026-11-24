@@ -51,11 +51,7 @@ class GlobalTokens(nn.Module):
 
         Returns: tensor [batch_size, num_tokens, hidden_size].
         """
-        return (
-            self.tokens.unsqueeze(0)
-            .expand(batch_size, -1, -1)
-            .to(dtype=dtype, device=device)
-        )
+        return self.tokens.unsqueeze(0).expand(batch_size, -1, -1).to(dtype=dtype, device=device)
 
     def prepend_to_embeddings(self, inputs_embeds: torch.Tensor) -> torch.Tensor:
         """Concatenate the globals to the front of [B, T, d] -> [B, N+T, d]."""
@@ -121,3 +117,27 @@ class GlobalTokens(nn.Module):
 
         mask = causal & (content_allows | global_allows | (is_global_row & is_global_col))
         return mask.to(dtype=torch.bool)
+
+
+class RegisterBank(GlobalTokens):
+    """Learnable register bank for the swa_registers variant.
+
+    Same parameter shape as :class:`GlobalTokens` (``[num_tokens, hidden]``) so
+    the two arch twins stay matched-N, but the tokens are NEVER prepended to the
+    sequence — SWA layers read them through a zero-init cross-attention instead
+    (see ``modules/swa_registers.py``). Kept as a subclass so probes and the
+    optimizer-grouping code can distinguish bank-as-prefix from bank-as-registers
+    while sharing the init/expansion helpers.
+    """
+
+
+class SinkBank(GlobalTokens):
+    """Tiny out-of-sequence sink/anchor bank (swa_sink_count, swa_scribe arch).
+
+    Same learned [N, hidden] table as GlobalTokens, but NEVER prepended: SWA
+    layers join it to the window branch's softmax via an exact LSE merge
+    (modules/swa_scribe.py), so it can absorb attention mass (the sink role)
+    without forcing the prefix kernel path. Live from step 0 — no gate — just
+    like prefix globals. Distinct subclass so probes and param audits can tell
+    the roles apart.
+    """

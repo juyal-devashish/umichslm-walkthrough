@@ -55,8 +55,7 @@ def _stage2_doubling_spec(parent_idx: int = 1) -> StageSpec:
         stage_index=2,
         attention_mode="deltanet_mla",
         block_specs=[
-            BlockSpec(source=i // 2, is_inserted=bool(i % 2), block_layout=layout)
-            for i in range(4)
+            BlockSpec(source=i // 2, is_inserted=bool(i % 2), block_layout=layout) for i in range(4)
         ],
         parent_stage_index=parent_idx,
     )
@@ -99,9 +98,7 @@ class TestRunTransition:
 
         for name in ("config.json", "optimizer.pt", "stage_metadata.json", "_DONE"):
             assert (stage2 / name).exists(), f"missing expected output: {name}"
-        assert (stage2 / "model.safetensors").exists() or (
-            stage2 / "pytorch_model.bin"
-        ).exists()
+        assert (stage2 / "model.safetensors").exists() or (stage2 / "pytorch_model.bin").exists()
 
     def test_optimizer_sidecar_format(self, tmp_workspace):
         stage1 = _make_stage1(tmp_workspace)
@@ -160,6 +157,6 @@ class TestRunTransition:
 
         # Re-run — the _DONE sentinel should short-circuit.
         run_transition(from_dir=stage1, to_dir=stage2, spec_path=spec_path)
-        assert meta_path.stat().st_mtime == first_mtime, (
-            "stage_metadata.json was rewritten despite _DONE sentinel"
-        )
+        assert (
+            meta_path.stat().st_mtime == first_mtime
+        ), "stage_metadata.json was rewritten despite _DONE sentinel"

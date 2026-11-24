@@ -16,18 +16,18 @@ inside each parquet file; files are processed in parallel.
 
 Usage:
     python scripts/data_cleaning/text_quality_filters.py \\
-        --input_dir  /scratch/.../filtered \\
-        --output_dir /scratch/.../quality_filtered
+        --input_dir  /path/to/data \\
+        --output_dir /path/to/data
 
     # Adjusted thresholds
     python scripts/data_cleaning/text_quality_filters.py \\
-        --input_dir  /scratch/.../filtered \\
-        --output_dir /scratch/.../quality_filtered \\
+        --input_dir  /path/to/data \\
+        --output_dir /path/to/data \\
         --min_words 100 --max_repetition_ratio 0.2 --workers 4
 
     # Dry run: print stats without writing output
     python scripts/data_cleaning/text_quality_filters.py \\
-        --input_dir /scratch/.../filtered \\
+        --input_dir /path/to/data \\
         --output_dir /tmp/dry \\
         --dry_run --sample 1000
 """

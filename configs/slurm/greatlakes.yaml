@@ -23,7 +23,7 @@ cpus_per_task: 4
 mem: "64G"
 
 # Class account
-account: cse598s004w26_class
+account: <account>
 
 output_dir: "/home/%u/umich-slm/slurm-logs"
 output_pattern: "scale-%j.out"
@@ -31,15 +31,15 @@ output_pattern: "scale-%j.out"
 conda_env: umich-slm
 
 env_vars:
-  HF_HOME: "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface"
-  HF_HUB_CACHE: "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface"
+  HF_HOME: "/path/to/data"
+  HF_HUB_CACHE: "/path/to/data"
   DISABLE_VERSION_CHECK: "1"
   TOKENIZERS_PARALLELISM: "false"
   WANDB_PROJECT: "scaling-experiment"
   WANDB_ENTITY: "umich-slm"
 
 dataset: fineweb_edu_1B_train
-dataset_dir: "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets"
+dataset_dir: "/path/to/data"
 eval_dataset: fineweb_edu_1B_val
 
-models_output_dir: "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results"
+models_output_dir: "/path/to/data"

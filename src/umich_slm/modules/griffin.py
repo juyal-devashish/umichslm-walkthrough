@@ -24,10 +24,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class GriffinCache:
@@ -36,6 +36,7 @@ class GriffinCache:
     Attributes:
         recurrent_state: Hidden state tensor of shape (batch, num_heads, head_dim).
     """
+
     recurrent_state: Optional[torch.FloatTensor] = None
 
 
@@ -81,6 +82,7 @@ class GriffinDynamicCache:
 # ---------------------------------------------------------------------------
 # RG-LRU
 # ---------------------------------------------------------------------------
+
 
 class RGLRUAttention(nn.Module):
     """Real-Gated Linear Recurrent Unit (RG-LRU).
@@ -132,6 +134,12 @@ class RGLRUAttention(nn.Module):
         self.gate_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
         self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
 
+        # Intra-document masking (W2): boolean [B, L] doc-start mask stashed by the
+        # model per forward (True at the first token of each packed document). When
+        # set, the recurrent state resets at boundaries so it does not leak across
+        # documents. None => single-document / cached-decode / not requested.
+        self._intra_doc_start = None
+
     def _compute_recurrence_gate(self, x: torch.Tensor) -> torch.Tensor:
         """Per-timestep recurrence gate a_t ∈ (0, 1).
 
@@ -158,6 +166,7 @@ class RGLRUAttention(nn.Module):
         i: torch.Tensor,
         a: torch.Tensor,
         h_prev: Optional[torch.Tensor],
+        doc_start: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Sequential RG-LRU scan over the time dimension.
 
@@ -166,6 +175,9 @@ class RGLRUAttention(nn.Module):
             i: Input values, shape (batch, seq_len, num_heads, head_dim).
             a: Recurrence gate, shape (batch, seq_len, num_heads, head_dim).
             h_prev: Previous hidden state (batch, num_heads, head_dim) or None.
+            doc_start: Optional boolean (batch, seq_len) marking each packed
+                document's first token. When set, the recurrent state is reset to
+                zero at those timesteps so one document cannot leak into the next.
 
         Returns:
             (outputs, h_last):
@@ -175,18 +187,22 @@ class RGLRUAttention(nn.Module):
         batch, seq_len, num_heads, head_dim = r.shape
 
         if h_prev is None:
-            h_prev = torch.zeros(
-                batch, num_heads, head_dim, device=r.device, dtype=r.dtype
-            )
+            h_prev = torch.zeros(batch, num_heads, head_dim, device=r.device, dtype=r.dtype)
 
         outputs = []
         h = h_prev
         for t in range(seq_len):
-            a_t = a[:, t]   # (batch, num_heads, head_dim)
+            # Reset state for any sequence whose document begins at this timestep,
+            # BEFORE the update, so a document's first token starts from zero state.
+            if doc_start is not None:
+                reset_t = doc_start[:, t]
+                if reset_t.any():
+                    h = h * (~reset_t).to(h.dtype).view(batch, 1, 1)
+            a_t = a[:, t]  # (batch, num_heads, head_dim)
             r_t = r[:, t]
             i_t = i[:, t]
             # Variance-preserving update
-            noise_scale = torch.sqrt(torch.clamp(1.0 - a_t ** 2, min=0.0))
+            noise_scale = torch.sqrt(torch.clamp(1.0 - a_t**2, min=0.0))
             h = a_t * h + noise_scale * (r_t * i_t)
             outputs.append(h)
 
@@ -224,16 +240,25 @@ class RGLRUAttention(nn.Module):
         h_prev = past_key_value.recurrent_state if past_key_value is not None else None
 
         # --- Projections ---
-        r = torch.sigmoid(self.r_proj(hidden_states))   # input gate
-        i = self.i_proj(hidden_states)                   # input values
-        a = self._compute_recurrence_gate(hidden_states) # recurrence gate
+        r = torch.sigmoid(self.r_proj(hidden_states))  # input gate
+        i = self.i_proj(hidden_states)  # input values
+        a = self._compute_recurrence_gate(hidden_states)  # recurrence gate
 
         # Reshape to (batch, seq_len, num_heads, head_dim)
         r = r.view(batch_size, seq_len, self.num_heads, self.head_dim)
         i = i.view(batch_size, seq_len, self.num_heads, self.head_dim)
 
+        # Intra-document masking: reset the recurrent state at packed-document
+        # boundaries. Only in the full-sequence training path (no cache, no carried
+        # state) and only when the stashed mask matches this sequence length.
+        doc_start = getattr(self, "_intra_doc_start", None)
+        if doc_start is not None and (
+            use_cache or h_prev is not None or doc_start.shape[-1] != seq_len
+        ):
+            doc_start = None
+
         # --- Recurrence ---
-        h_out, h_last = self._rglru_scan(r, i, a, h_prev)
+        h_out, h_last = self._rglru_scan(r, i, a, h_prev, doc_start=doc_start)
 
         # Flatten back to (batch, seq_len, hidden_size)
         h_out = h_out.reshape(batch_size, seq_len, self.hidden_size)

@@ -19,7 +19,7 @@ as kwargs via GRPOTrainer:
 
 Usage:
     python scripts/grpo_data/prepare_grpo_rag.py \\
-        --output_dir /scratch/.../grpo_data/v1/triviaqa
+        --output_dir /path/to/data
     python scripts/grpo_data/prepare_grpo_rag.py \\
         --output_dir /tmp/smoke --smoke 10
 """

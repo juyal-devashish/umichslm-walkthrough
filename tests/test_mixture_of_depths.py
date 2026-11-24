@@ -450,7 +450,9 @@ class TestMoDModelIntegration:
             if i % 2 == 1:  # Layers 1, 3, 5
                 assert isinstance(layer, UMichSLMMoDDecoderLayer), f"Layer {i} should be MoD"
             else:
-                assert not isinstance(layer, UMichSLMMoDDecoderLayer), f"Layer {i} should not be MoD"
+                assert not isinstance(
+                    layer, UMichSLMMoDDecoderLayer
+                ), f"Layer {i} should not be MoD"
 
     def test_model_forward_training(self, model):
         """Test full model forward during training."""
@@ -616,7 +618,13 @@ class TestMoDWithMoE:
         input_ids = torch.randint(0, 100, (2, 16))
         labels = input_ids.clone()
 
+        # Labels present -> chunked CE, so logits are not materialized (None).
+        # output_logits=True opts back in. See UMichSLMForCausalLM.forward.
         outputs = model(input_ids=input_ids, labels=labels)
+        assert outputs.loss is not None
+        assert outputs.logits is None
+
+        outputs = model(input_ids=input_ids, labels=labels, output_logits=True)
         assert outputs.loss is not None
         assert outputs.logits.shape == (2, 16, 100)
 
@@ -703,8 +711,7 @@ class TestMoDCapacityVariations:
 
         # Count MoD layers
         num_mod_layers = sum(
-            1 for layer in model.model.layers
-            if isinstance(layer, UMichSLMMoDDecoderLayer)
+            1 for layer in model.model.layers if isinstance(layer, UMichSLMMoDDecoderLayer)
         )
 
         # Expected: layers where (idx % every_n) == 1

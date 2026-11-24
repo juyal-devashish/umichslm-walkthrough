@@ -11,8 +11,8 @@ All parameters can be set via a JSON config file; CLI flags override the config.
 
 Config file format (all keys optional — defaults shown):
     {
-      "data_dir":           "/scratch/.../fineweb-edu-dedup",
-      "work_dir":           "/scratch/.../cleaned",
+      "data_dir":           "/path/to/data",
+      "work_dir":           "/path/to/data",
       "score_threshold":    3.0,
       "min_words":          50,
       "max_words":          100000,

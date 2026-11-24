@@ -126,6 +126,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dataloader_workers", type=int, default=4)
 
+    # Token-Superposition Training (TST)
+    parser.add_argument("--tst_enabled", action="store_true",
+                        help="Enable TST phase (i) + recovery (Peng et al., arXiv:2605.06546).")
+    parser.add_argument("--tst_bag_size", type=int, default=6,
+                        help="TST bag size s (paper recommends 4-8 for dense ≤3B).")
+    parser.add_argument("--tst_recovery_ratio", type=float, default=0.3,
+                        help="Fraction of total steps spent in TST phase (i) before recovery.")
+    parser.add_argument("--tst_loss_weighting", type=str, default="uniform",
+                        choices=["uniform", "power_law"],
+                        help="Within-bag weighting for MCE (power_law per Appendix D for s>=8).")
+
     return parser.parse_args()
 
 
@@ -225,6 +236,21 @@ def main() -> None:
     )
 
     # ----------------------------------------------------------------- Trainer
+    callbacks = []
+    if getattr(args, "tst_enabled", False):
+        from umich_slm.callbacks import TSTTrainerCallback
+        # Propagate TST settings into the model config so forward() picks them up.
+        model.config.tst_enabled = True
+        model.config.tst_bag_size = int(args.tst_bag_size)
+        model.config.tst_loss_weighting = args.tst_loss_weighting
+        callbacks.append(
+            TSTTrainerCallback(
+                enabled=True,
+                bag_size=int(args.tst_bag_size),
+                recovery_ratio=float(args.tst_recovery_ratio),
+            )
+        )
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -232,6 +258,7 @@ def main() -> None:
         eval_dataset=dataset.get("validation"),
         data_collator=collator,
         tokenizer=tokenizer,
+        callbacks=callbacks or None,
     )
 
     print("\nStarting training...")

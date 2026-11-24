@@ -96,9 +96,12 @@ class TestSWAModelPrependStrip:
     def test_globals_present_only_when_mode_set(self):
         # legacy mode: no global_tokens module instantiated
         c = UMichSLMConfig(
-            vocab_size=128, num_hidden_layers=4,
-            hidden_size=32, intermediate_size=64,
-            num_attention_heads=4, num_key_value_heads=4,
+            vocab_size=128,
+            num_hidden_layers=4,
+            hidden_size=32,
+            intermediate_size=64,
+            num_attention_heads=4,
+            num_key_value_heads=4,
         )
         m = UMichSLMForCausalLM(c)
         assert m.model.global_tokens is None

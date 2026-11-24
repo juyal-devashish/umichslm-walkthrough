@@ -3,13 +3,13 @@
 #
 # Usage (single run):
 #   llamafactory-cli train configs/llama_factory/umichslm_sft.yaml \
-#       learning_rate=2e-5 output_dir=/scratch/.../sft_lr2e-5
+#       learning_rate=2e-5 output_dir=/path/to/data
 #
 # Usage (LR sweep): see local-slurm/sft_lr_sweep.sh
 
 ### Model Configuration ###
 # Must be the 6-token-extended base (run scripts/sft_data/extend_tokenizer.py first).
-model_name_or_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-base-6tok
+model_name_or_path: /path/to/data
 trust_remote_code: true
 
 ### Data Configuration ###
@@ -27,8 +27,8 @@ finetuning_type: full
 
 ### Output Configuration ###
 # Override via CLI per-run to avoid clobber during LR sweep.
-output_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-sft-default
-logging_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-sft-default/tb
+output_dir: /path/to/data
+logging_dir: /path/to/data
 overwrite_output_dir: true
 
 ### Training Hyperparameters ###

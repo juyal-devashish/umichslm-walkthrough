@@ -18,8 +18,8 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .mamba2 import Mamba2SSM, Mamba2Cache
 from .hymba_cache import HymbaDynamicCache
+from .mamba2 import Mamba2Cache, Mamba2SSM
 from .rmsnorm import RMSNorm
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,12 @@ class HymbaHybridHead(nn.Module):
         self.attn_scale = nn.Parameter(torch.ones(self.hidden_size))  # beta1
         self.ssm_scale = nn.Parameter(torch.ones(self.hidden_size))  # beta2
 
+        # Intra-document masking (W2): the model stashes the doc-start mask on this
+        # head; the inner attention branch already honours intra-doc masking via the
+        # additive attention_mask, but the parallel SSM branch needs the boolean
+        # doc-start signal to reset its recurrence/conv. We forward it in forward().
+        self._intra_doc_start = None
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -157,7 +163,9 @@ class HymbaHybridHead(nn.Module):
             use_cache=use_cache,
         )
 
-        # SSM path
+        # SSM path. Forward the doc-start mask so the SSM recurrence + short conv
+        # reset at packed-document boundaries (Mamba2SSM guards cache/length itself).
+        self.ssm._intra_doc_start = getattr(self, "_intra_doc_start", None)
         ssm_out, ssm_new_cache = self.ssm(
             hidden_states,
             cache=ssm_cache,

@@ -6,17 +6,17 @@
 #       model_name_or_path=<SFT_WINNER_DIR> \
 #       ref_model=<SFT_WINNER_DIR> \
 #       dpo_beta=0.1 \
-#       output_dir=/scratch/.../umichslm-dpo-beta0.1
+#       output_dir=/path/to/data
 #
 # Usage (β sweep): see local-slurm/dpo_beta_sweep.sh
 
 ### Model Configuration ###
 # Pass via CLI: the best SFT LR checkpoint from the LR sweep.
-model_name_or_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/PLACEHOLDER_SFT_WINNER
+model_name_or_path: /path/to/data
 trust_remote_code: true
 
 ### Reference Model ###
-ref_model: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/PLACEHOLDER_SFT_WINNER
+ref_model: /path/to/data
 
 ### Data Configuration ###
 dataset_dir: ./configs/llama_factory
@@ -37,8 +37,8 @@ dpo_loss: sigmoid
 dpo_ftx: 0.0
 
 ### Output Configuration ###
-output_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-dpo-default
-logging_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-dpo-default/tb
+output_dir: /path/to/data
+logging_dir: /path/to/data
 overwrite_output_dir: true
 
 ### Training Hyperparameters ###

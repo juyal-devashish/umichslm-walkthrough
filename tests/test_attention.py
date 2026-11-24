@@ -36,9 +36,7 @@ class TestUMichSLMAttention:
         hidden_states = torch.randn(2, 16, attention_config.hidden_size)
         position_ids = torch.arange(16).unsqueeze(0).expand(2, -1)
 
-        output, _, _ = attention_module(
-            hidden_states, position_ids=position_ids
-        )
+        output, _, _ = attention_module(hidden_states, position_ids=position_ids)
 
         assert output.shape == hidden_states.shape
 
@@ -55,9 +53,7 @@ class TestUMichSLMAttention:
         # First forward pass
         hidden_1 = torch.randn(1, 4, attention_config.hidden_size)
         pos_1 = torch.arange(4).unsqueeze(0)
-        _, _, past_kv = attention_module(
-            hidden_1, position_ids=pos_1, use_cache=True
-        )
+        _, _, past_kv = attention_module(hidden_1, position_ids=pos_1, use_cache=True)
 
         assert past_kv is not None
         assert past_kv[0].shape[2] == 4  # KV cache has 4 positions
@@ -66,8 +62,7 @@ class TestUMichSLMAttention:
         hidden_2 = torch.randn(1, 1, attention_config.hidden_size)
         pos_2 = torch.tensor([[4]])
         output, _, new_past_kv = attention_module(
-            hidden_2, position_ids=pos_2,
-            past_key_value=past_kv, use_cache=True
+            hidden_2, position_ids=pos_2, past_key_value=past_kv, use_cache=True
         )
 
         # Cache should have grown
@@ -79,9 +74,7 @@ class TestUMichSLMAttention:
         position_ids = torch.arange(8).unsqueeze(0)
 
         _, attn_weights, _ = attention_module(
-            hidden_states,
-            position_ids=position_ids,
-            output_attentions=True
+            hidden_states, position_ids=position_ids, output_attentions=True
         )
 
         if attn_weights is not None:
@@ -93,9 +86,7 @@ class TestUMichSLMAttention:
 
     def test_gradient_flow(self, attention_module, attention_config):
         """Gradients should flow through attention."""
-        hidden_states = torch.randn(
-            2, 16, attention_config.hidden_size, requires_grad=True
-        )
+        hidden_states = torch.randn(2, 16, attention_config.hidden_size, requires_grad=True)
         position_ids = torch.arange(16).unsqueeze(0).expand(2, -1)
 
         output, _, _ = attention_module(hidden_states, position_ids=position_ids)
@@ -116,9 +107,7 @@ class TestUMichSLMAttention:
     def test_mixed_precision(self, attention_config):
         """Should work with mixed precision."""
         attn = UMichSLMAttention(attention_config, layer_idx=0).to(torch.float16)
-        hidden_states = torch.randn(
-            2, 16, attention_config.hidden_size, dtype=torch.float16
-        )
+        hidden_states = torch.randn(2, 16, attention_config.hidden_size, dtype=torch.float16)
         position_ids = torch.arange(16).unsqueeze(0).expand(2, -1)
 
         output, _, _ = attn(hidden_states, position_ids=position_ids)
@@ -156,10 +145,7 @@ class TestSDPAAttention:
 class TestFlashAttention:
     """Tests for Flash Attention 2 implementation."""
 
-    @pytest.mark.skipif(
-        not FLASH_ATTENTION_AVAILABLE,
-        reason="Flash Attention not available"
-    )
+    @pytest.mark.skipif(not FLASH_ATTENTION_AVAILABLE, reason="Flash Attention not available")
     def test_flash_attention_available(self):
         """Flash Attention should be importable when available."""
         assert FLASH_ATTENTION_AVAILABLE
@@ -227,8 +213,7 @@ class TestPoPEAttention:
         hidden_2 = torch.randn(1, 1, pope_attention_config.hidden_size)
         pos_2 = torch.tensor([[8]])
         output, _, new_past_kv = attn(
-            hidden_2, position_ids=pos_2,
-            past_key_value=past_kv, use_cache=True
+            hidden_2, position_ids=pos_2, past_key_value=past_kv, use_cache=True
         )
 
         # Output should still have correct shape
@@ -261,8 +246,7 @@ class TestPoPEAttention:
             hidden = torch.randn(1, 1, pope_attention_config.hidden_size)
             pos = torch.tensor([[4 + step]])
             output, _, past_kv = attn(
-                hidden, position_ids=pos,
-                past_key_value=past_kv, use_cache=True
+                hidden, position_ids=pos, past_key_value=past_kv, use_cache=True
             )
 
         # Should not raise and output should have correct shape

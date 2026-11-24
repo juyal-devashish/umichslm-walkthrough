@@ -22,11 +22,37 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 _SRC = _REPO_ROOT / "src"
-if _SRC.exists() and str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
+
+
+def _prepend(path: Path) -> None:
+    """Put ``path`` at the FRONT of ``sys.path``, moving it if already present.
+
+    The ordering is load-bearing, not cosmetic. For ``python
+    scripts/torchtitan_train.py`` the interpreter makes ``scripts/`` into
+    ``sys.path[0]``, and this file's own name collides with the top-level
+    ``torchtitan_train`` PACKAGE -- the only such collision in the repo. If
+    ``scripts/`` stays in front, ``from torchtitan_train.launch import main``
+    re-imports *this file* as a module and dies with
+    ``ModuleNotFoundError: ... 'torchtitan_train' is not a package``.
+
+    A ``not in sys.path`` guard is not enough, and that is exactly how this
+    shipped broken: in the ``umich-slm-fa2`` env on the GPU nodes the repo root
+    is ALREADY on ``sys.path`` (pip-installed package plus an inherited
+    PYTHONPATH), so the guard found it, skipped the insert, and left
+    ``scripts/`` in front. Jobs 61674 and 61956 both lost their whole
+    allocation to it after a clean preflight, while a plain ``python
+    scripts/torchtitan_train.py`` on a host without that env works -- which is
+    what made it look like a cluster problem rather than a repo bug.
+    """
+    while str(path) in sys.path:
+        sys.path.remove(str(path))
+    sys.path.insert(0, str(path))
+
+
+_prepend(_REPO_ROOT)
+if _SRC.exists():
+    _prepend(_SRC)
 
 # Trigger AutoConfig/AutoModel registration in this process and any spawned
 # dataloader workers (PYTHONPATH propagates to them under torchrun).

@@ -18,7 +18,7 @@ Output format (ShareGPT DPO, matches prepare_ultrafeedback.py):
     }
 
 Usage:
-    python scripts/dpo_data/prepare_webgpt.py --output_dir /scratch/.../dpo_data/v1/webgpt
+    python scripts/dpo_data/prepare_webgpt.py --output_dir /path/to/data
     python scripts/dpo_data/prepare_webgpt.py --output_dir /tmp/smoke --smoke 10
     python scripts/dpo_data/prepare_webgpt.py --output_dir /tmp/probe --probe
 """

@@ -32,7 +32,6 @@ from ..modeling_umichslm import UMichSLMForCausalLM
 from ..modules.transformer_block import UMichSLMMoDDecoderLayer
 from .block_spec import StageSpec
 
-
 LayerMapping = Dict[int, Union[int, str]]
 
 
@@ -85,9 +84,16 @@ def _copy_non_block_params(
     ``model.global_tokens.*``, ``model.meta_tokens.*``, ``lm_head.*``,
     and the MTP heads (``mtp.*``). Anything *not* starting with
     ``model.layers.`` is treated as a non-block parameter.
+
+    Block-atomic MoD routers (``model.mod_block_routers.*``) are excluded: they
+    are keyed by block-head layer index, which shifts between stages, so a blind
+    key-match copy would be wrong. They are migrated per block-source mapping by
+    :func:`_migrate_atomic_block_routers` instead.
     """
     for k, v in prev_state_dict.items():
         if k.startswith("model.layers."):
+            continue
+        if k.startswith("model.mod_block_routers."):
             continue
         if k in new_state_dict:
             new_state_dict[k] = v.clone()
@@ -135,9 +141,54 @@ def _perturb_router(layer: torch.nn.Module, std: float) -> None:
     if not hasattr(layer, "router") or not hasattr(layer.router, "router"):
         return
     with torch.no_grad():
-        layer.router.router.weight.add_(
-            torch.randn_like(layer.router.router.weight) * std
-        )
+        layer.router.router.weight.add_(torch.randn_like(layer.router.router.weight) * std)
+
+
+def _migrate_atomic_block_routers(
+    new_model: UMichSLMForCausalLM,
+    prev_state_dict: Dict[str, torch.Tensor],
+    prev_config: UMichSLMConfig,
+    stage_spec: StageSpec,
+    block_size: int,
+) -> None:
+    """Copy/perturb block-atomic MoD routers per the block-source mapping.
+
+    In block-atomic mode the router for a block lives at
+    ``model.mod_block_routers.{head}`` (``head = block_idx * block_size``), not on
+    a per-layer MoD module, so it is not carried by the per-block weight copy. For
+    each inserted destination block whose source block was ALSO MoD-routed in the
+    previous stage, copy that source router's weights over (with optional
+    perturbation); otherwise the destination keeps its fresh init.
+    """
+    routers = new_model.model.mod_block_routers
+    if len(routers) == 0:
+        return
+
+    # Which previous-stage block heads had a router (were MoD-routed)?
+    prev_block_size = None
+    prev_spec = getattr(prev_config, "stage_block_spec", None)
+    if prev_spec:
+        first = prev_spec[0].get("block_layout")
+        prev_block_size = len(first) if first else block_size
+    prev_router_keys = {k for k in prev_state_dict if k.startswith("model.mod_block_routers.")}
+
+    for new_block_idx, bs in enumerate(stage_spec.block_specs):
+        head = new_block_idx * block_size
+        if str(head) not in routers:
+            continue  # this destination block is dense (not MoD-routed)
+        if bs.source is None or bs.fresh_router or prev_block_size is None:
+            continue  # keep fresh init
+        src_head = bs.source * prev_block_size
+        src_w_key = f"model.mod_block_routers.{src_head}.router.weight"
+        if src_w_key not in prev_router_keys:
+            continue  # source block wasn't MoD-routed -> nothing to copy; stay fresh
+        with torch.no_grad():
+            routers[str(head)].router.weight.copy_(prev_state_dict[src_w_key])
+            std = float(bs.router_perturb_std)
+            if std > 0:
+                routers[str(head)].router.weight.add_(
+                    torch.randn_like(routers[str(head)].router.weight) * std
+                )
 
 
 def build_stage_n_model(
@@ -201,8 +252,10 @@ def build_stage_n_model(
             layer_mapping[new_block_idx] = "fresh"
             continue
         _copy_inherited_block_weights(
-            prev_state_dict, new_state_dict,
-            src_block=bs.source, dst_block=new_block_idx,
+            prev_state_dict,
+            new_state_dict,
+            src_block=bs.source,
+            dst_block=new_block_idx,
             layers_per_block=block_size,
         )
         layer_mapping[new_block_idx] = bs.source
@@ -213,21 +266,28 @@ def build_stage_n_model(
     # dict (e.g. fresh inserted-block routers) keep their fresh init — that's
     # the desired behavior.
 
-    # Mark inserted blocks via set_inserted so MoD capacity flips to
-    # mod_capacity_inserted, optionally apply identity init and router
-    # perturbation.
+    # Block-atomic MoD (new path): routers were built on the inserted blocks at
+    # construction from stage_block_spec; migrate their weights per block source.
+    atomic = bool(getattr(new_config, "mod_atomic_block", False))
+    if atomic:
+        _migrate_atomic_block_routers(
+            new_model, prev_state_dict, prev_config, stage_spec, block_size
+        )
+
+    # Mark inserted blocks. Legacy per-layer MoD flips capacity via set_inserted
+    # and perturbs the per-layer router; block-atomic MoD already encoded both at
+    # construction + router migration above. Identity init applies to both.
     for new_block_idx, bs in enumerate(stage_spec.block_specs):
-        start = new_block_idx * block_size
-        for i in range(start, start + block_size):
-            layer = new_model.model.layers[i]
-            if isinstance(layer, UMichSLMMoDDecoderLayer):
-                layer.set_inserted(bs.is_inserted)
-                if bs.is_inserted and not bs.fresh_router:
-                    _perturb_router(layer, bs.router_perturb_std)
+        if not atomic:
+            start = new_block_idx * block_size
+            for i in range(start, start + block_size):
+                layer = new_model.model.layers[i]
+                if isinstance(layer, UMichSLMMoDDecoderLayer):
+                    layer.set_inserted(bs.is_inserted)
+                    if bs.is_inserted and not bs.fresh_router:
+                        _perturb_router(layer, bs.router_perturb_std)
 
         if bs.is_inserted and init_strategy == "llama_pro_identity":
-            _zero_inserted_block_for_identity_init(
-                new_model, new_block_idx, block_size
-            )
+            _zero_inserted_block_for_identity_init(new_model, new_block_idx, block_size)
 
     return new_config, new_model, layer_mapping

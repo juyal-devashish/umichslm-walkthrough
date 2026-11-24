@@ -24,6 +24,7 @@ from run_eval import evaluate, print_res_table, _primary_metric
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def gpt2_model_and_tokenizer():
     """Load gpt2 once for all tests in this module."""
@@ -37,6 +38,7 @@ def gpt2_model_and_tokenizer():
 # ---------------------------------------------------------------------------
 # Unit tests for helpers
 # ---------------------------------------------------------------------------
+
 
 def test_primary_metric():
     results = {"some_other_metric": 0.7}
@@ -69,15 +71,16 @@ def test_print_res_table_empty():
 
 # (task_name, num_fewshot, substring that must appear in at least one metric key)
 TASK_PARAMS = [
-    ("hellaswag",      0, "acc"),
-    ("arc_challenge",  0, "acc"),
-    ("mmlu",           5, "acc"),
-    ("gsm8k",          4, "exact_match"),
+    ("hellaswag", 0, "acc"),
+    ("arc_challenge", 0, "acc"),
+    ("mmlu", 5, "acc"),
+    ("gsm8k", 4, "exact_match"),
     ("truthfulqa_mc1", 0, "acc"),
     ("truthfulqa_mc2", 0, "acc"),
 ]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("task,fewshot,metric_substr", TASK_PARAMS)
 def test_evaluate_task_structure(gpt2_model_and_tokenizer, tmp_path, task, fewshot, metric_substr):
     """Each task should return a result dict with at least one expected metric
@@ -112,7 +115,7 @@ def test_evaluate_task_structure(gpt2_model_and_tokenizer, tmp_path, task, fewsh
     assert task in record["results"]
 
 
-
+@pytest.mark.slow
 def test_evaluate_appends_jsonl(gpt2_model_and_tokenizer, tmp_path):
     """Calling evaluate() twice should append two lines to the JSONL file."""
     model, tokenizer = gpt2_model_and_tokenizer

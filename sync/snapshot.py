@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Weekly snapshot sync for the walkthrough repository.
+"""Daily snapshot sync for the walkthrough repository.
 
 Reads an upstream checkout, takes the newest commit at least N days old, copies
 the allowlisted text files through redaction, runs fail-closed gates, and
@@ -278,8 +278,8 @@ def cmd_sync(a) -> int:
     stamp_banner(target / "README.md", sha, date, synced)
     note = ""
     if os.environ.get("ANTHROPIC_API_KEY"):
-        from summarize import weekly_note  # sibling module
-        note = weekly_note(target)
+        from summarize import daily_note  # sibling module
+        note = daily_note(target)
     entry = f"## {synced} — snapshot of upstream `{sha[:7]}` ({date})\n\n{summarize_counts(added, modified, removed)}\n" + (f"\n{note}\n" if note else "")
     prepend_changelog(target / "CHANGELOG.md", entry)
     return emit(a, changed=True, sha=sha)

@@ -1,4 +1,4 @@
-# What the weekly sync may publish. Everything not listed here is never copied.
+# What the daily sync may publish. Everything not listed here is never copied.
 #
 #   path/          publish every text file under this directory
 #   path           publish exactly this file

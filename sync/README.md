@@ -1,6 +1,6 @@
 # Sync tooling
 
-A weekly GitHub Actions job (`.github/workflows/sync.yml`) refreshes this repository from a private source.
+A daily GitHub Actions job (`.github/workflows/sync.yml`) refreshes this repository from a private source.
 
 **Flow.** Pick the newest source commit at least 14 days old, copy allowlisted text files, apply redactions, run the gates, then open a pull request and squash-merge it. Reverting that pull request rolls the snapshot back.
 

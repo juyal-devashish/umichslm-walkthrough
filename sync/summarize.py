@@ -24,7 +24,7 @@ def build_prompt(diff: str) -> str:
     return PROMPT + diff[:MAX_DIFF_CHARS]
 
 
-def weekly_note(target: Path) -> str:
+def daily_note(target: Path) -> str:
     diff = subprocess.run(["git", "diff", "HEAD", "--", "src", "docs", "configs"], cwd=target,
                           capture_output=True, text=True).stdout
     if not diff.strip():

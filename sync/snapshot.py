@@ -237,7 +237,7 @@ def stamp_banner(readme: Path, sha: str, date: str, synced: str) -> None:
 
 
 def prepend_changelog(path: Path, entry: str) -> None:
-    head = "# Changelog\n\nEach entry is one weekly snapshot. Revert the matching pull request to roll one back.\n\n"
+    head = "# Changelog\n\nEach entry is one snapshot. Revert the matching pull request to roll one back.\n\n"
     old = path.read_text(encoding="utf-8") if path.exists() else head
     if not old.startswith("# Changelog"):
         old = head + old

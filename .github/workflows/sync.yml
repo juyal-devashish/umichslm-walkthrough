@@ -1,8 +1,8 @@
-name: Weekly snapshot sync
+name: Daily snapshot sync
 
 on:
   schedule:
-    - cron: "17 9 * * 1"   # Mondays 09:17 UTC
+    - cron: "17 9 * * *"   # daily 09:17 UTC
   workflow_dispatch:
     inputs:
       dry_run:
@@ -74,11 +74,11 @@ jobs:
           git push origin "$branch"
           gh pr create --base main --head "$branch" \
             --title "Sync snapshot from upstream ${{ steps.snap.outputs.sha }}" \
-            --body "Automated weekly snapshot. Revert this pull request to roll it back."
+            --body "Automated daily snapshot. Revert this pull request to roll it back."
           gh pr merge "$branch" --squash --delete-branch
 
       - name: Report failure
         if: failure()
         run: |
-          gh issue create --title "Weekly sync stopped" \
+          gh issue create --title "Daily sync stopped" \
             --body "A gate or step failed; nothing was published. See the run log for rule names and file lines: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

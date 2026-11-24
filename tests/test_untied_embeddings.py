@@ -33,8 +33,13 @@ def _untied_config(**overrides):
 
 class TestUntiedEmbeddings:
     def test_default_tie_word_embeddings_is_false(self):
-        c = UMichSLMConfig(num_hidden_layers=2, hidden_size=16, intermediate_size=32,
-                           num_attention_heads=4, num_key_value_heads=4)
+        c = UMichSLMConfig(
+            num_hidden_layers=2,
+            hidden_size=16,
+            intermediate_size=32,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+        )
         # The PretrainedConfig stores it; default in __init__ signature is False.
         assert c.tie_word_embeddings is False
 

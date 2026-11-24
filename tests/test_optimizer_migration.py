@@ -58,11 +58,21 @@ def _doubling_spec_2_to_4(attention_mode="deltanet_mla"):
         attention_mode=attention_mode,
         block_specs=[
             BlockSpec(source=0, is_inserted=False, block_layout=list(layout)),
-            BlockSpec(source=0, is_inserted=True, block_layout=list(layout),
-                      fresh_router=True, router_perturb_std=0.0),
+            BlockSpec(
+                source=0,
+                is_inserted=True,
+                block_layout=list(layout),
+                fresh_router=True,
+                router_perturb_std=0.0,
+            ),
             BlockSpec(source=1, is_inserted=False, block_layout=list(layout)),
-            BlockSpec(source=1, is_inserted=True, block_layout=list(layout),
-                      fresh_router=True, router_perturb_std=0.0),
+            BlockSpec(
+                source=1,
+                is_inserted=True,
+                block_layout=list(layout),
+                fresh_router=True,
+                router_perturb_std=0.0,
+            ),
         ],
     )
 
@@ -122,10 +132,9 @@ class TestOptimizerMigration:
 
         # Find any parameter under model.layers.0.* that exists in both
         candidates = [
-            n for n in prev_name_to_id
-            if n.startswith("model.layers.0.")
-            and "router" not in n
-            and n in new_name_to_id
+            n
+            for n in prev_name_to_id
+            if n.startswith("model.layers.0.") and "router" not in n and n in new_name_to_id
         ]
         assert candidates, "expected at least one inherited block param"
         # Use the first candidate — its moments should be deep-copied identically
@@ -175,9 +184,7 @@ class TestOptimizerMigration:
             ea_zero = float(entry["exp_avg"].abs().sum()) == 0.0
             es_zero = float(entry["exp_avg_sq"].abs().sum()) == 0.0
             # Fresh router => both zero. Otherwise both non-zero.
-            assert ea_zero == es_zero, (
-                f"router param {nm} has inconsistent moment-zero state"
-            )
+            assert ea_zero == es_zero, f"router param {nm} has inconsistent moment-zero state"
 
     def test_loadable_into_real_optimizer(self):
         cfg = _stage1_config()

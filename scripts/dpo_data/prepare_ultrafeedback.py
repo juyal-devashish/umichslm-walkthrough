@@ -15,7 +15,7 @@ the dataset's own `test_prefs` split fully.
 
 Usage:
     python scripts/dpo_data/prepare_ultrafeedback.py \\
-        --output_dir /scratch/.../dpo_data/v1/ultrafeedback \\
+        --output_dir /path/to/data \\
         --n 15000
 """
 from __future__ import annotations

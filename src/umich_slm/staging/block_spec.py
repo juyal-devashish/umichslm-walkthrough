@@ -63,6 +63,39 @@ class BlockSpec:
 
 
 @dataclass
+class StageTSTSpec:
+    """Per-stage Token-Superposition Training spec (Peng et al., arXiv:2605.06546).
+
+    When ``enabled``, the stage's training loop runs phase (i) with mean-pooled
+    bags of size ``bag_size`` and multi-hot CE, then flips to standard NTP at
+    step ``int(stage_steps * recovery_ratio)``. Recovery always completes
+    within the stage, so the grown checkpoint handed to the next stage is a
+    standard-NTP checkpoint regardless of which stages enabled TST.
+    """
+
+    enabled: bool = False
+    bag_size: int = 6
+    recovery_ratio: float = 0.3
+    loss_weighting: str = "uniform"  # "uniform" | "power_law"
+    extend_seq_len_for_equal_flops: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "StageTSTSpec":
+        return cls(
+            enabled=bool(d.get("enabled", False)),
+            bag_size=int(d.get("bag_size", 6)),
+            recovery_ratio=float(d.get("recovery_ratio", 0.3)),
+            loss_weighting=str(d.get("loss_weighting", "uniform")),
+            extend_seq_len_for_equal_flops=bool(
+                d.get("extend_seq_len_for_equal_flops", True)
+            ),
+        )
+
+
+@dataclass
 class StageSpec:
     """Specification for a training stage."""
 
@@ -72,6 +105,7 @@ class StageSpec:
     parent_stage_index: Optional[int] = None
     parent_checkpoint: Optional[str] = None
     init_strategy: str = "exact_copy"  # or "llama_pro_identity"
+    tst: Optional[StageTSTSpec] = None
 
     @property
     def num_blocks(self) -> int:
@@ -103,12 +137,15 @@ class StageSpec:
             "parent_stage_index": self.parent_stage_index,
             "parent_checkpoint": self.parent_checkpoint,
             "init_strategy": self.init_strategy,
+            "tst": self.tst.to_dict() if self.tst is not None else None,
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "StageSpec":
         if "block_specs" not in d:
             raise ValueError("StageSpec dict missing required key 'block_specs'.")
+        tst_raw = d.get("tst")
+        tst = StageTSTSpec.from_dict(tst_raw) if isinstance(tst_raw, dict) else None
         return cls(
             stage_index=int(d["stage_index"]),
             attention_mode=str(d["attention_mode"]),
@@ -116,6 +153,7 @@ class StageSpec:
             parent_stage_index=d.get("parent_stage_index"),
             parent_checkpoint=d.get("parent_checkpoint"),
             init_strategy=str(d.get("init_strategy", "exact_copy")),
+            tst=tst,
         )
 
     def save(self, path: Union[str, Path]) -> None:

@@ -4,22 +4,22 @@
 # Single run:
 #   python scripts/run_grpo.py \
 #       --model_path <SFT_WINNER_DIR> \
-#       --train_data /scratch/.../grpo_data/v1/gsm8k/train.jsonl \
-#       --val_data   /scratch/.../grpo_data/v1/gsm8k/val.jsonl \
-#       --output_dir /scratch/.../umichslm-grpo-default
+#       --train_data /path/to/data \
+#       --val_data   /path/to/data \
+#       --output_dir /path/to/data
 #
 # Sweep: see local-slurm/grpo_sweep.sh
 
 ### Model ###
-model_name_or_path: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/PLACEHOLDER_SFT_WINNER
+model_name_or_path: /path/to/data
 trust_remote_code: true
 
 ### Data ###
-train_data: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/grpo_data/v1/gsm8k/train.jsonl
-val_data:   /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/grpo_data/v1/gsm8k/val.jsonl
+train_data: /path/to/data
+val_data:   /path/to/data
 
 ### Output ###
-output_dir: /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/umichslm-grpo-default
+output_dir: /path/to/data
 
 ### GRPO hyperparameters ###
 # num_generations (G): completions sampled per prompt per update step.

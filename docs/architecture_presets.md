@@ -316,6 +316,24 @@ python scripts/pretrain_fineweb.py --size qwen3_5_like_xsmall --output_dir ./out
 python scripts/diagnose_memory.py --size qwen3_5_like_small
 ```
 
+## Delphi width-scaling presets
+
+Added for the Delphi-style scaling sweep (see `docs/scaling_experiments.md`).
+Depth/width follow `depth = round(H / (64 + 4·log₂H − 9))` and
+`n_heads = H/128`, with MLP ratio 4 and GQA 4:1. Depths are nudged ±1 from
+the strict formula to hit the labelled backbone parameter count within 15 %.
+
+| Preset         | Hidden | Layers | n_heads | n_kv | Intermediate | Backbone | Total (49 k vocab) |
+|----------------|--------|--------|---------|------|--------------|----------|--------------------|
+| `delphi_10m`   | 384    | 5      | 3       | 1    | 1536         | ~10.8 M  | ~48.6 M            |
+| `delphi_25m`   | 512    | 6      | 4       | 1    | 2048         | ~22.8 M  | ~73.1 M            |
+| `delphi_50m`   | 640    | 8      | 5       | 1    | 2560         | ~47.2 M  | ~110.1 M           |
+| `delphi_100m`  | 896    | 9      | 7       | 2    | 3584         | ~105.3 M | ~193.4 M           |
+
+The runtime arch helper `delphi_arch(H)` in `src/umich_slm/recipe/delphi.py`
+returns the strict formula values; the presets above deviate slightly to
+hit parameter targets.
+
 ## Notes
 
 - `Backbone Params` excludes token embeddings and the LM head.

@@ -139,6 +139,10 @@ class MoDAFFNProjection(nn.Module):
         return k, v
 
 
+_MASK_CACHE: dict = {}
+_MASK_CACHE_MAX = 8
+
+
 def build_moda_combined_mask(
     seq_len: int,
     depth_seq_len: int,
@@ -170,31 +174,42 @@ def build_moda_combined_mask(
         total_kv_len = (past_len + seq_len) + depth_seq_len.
         Masked positions are -inf, unmasked are 0.
     """
+    # Vectorized construction — the original Python loops were O(seq_len *
+    # num_depth_layers) host-side work per attention call, which dominated at
+    # 2-4K context (this builder runs in every MoDA layer's forward).
+    #
+    # The mask depends only on shapes/device/dtype, which are constant across
+    # layers and steps during fixed-shape training, so cache it: without this,
+    # every MoDA layer re-materializes a [S, S + depth] tensor each forward.
+    # The cached mask is shared read-only; callers must not mutate it.
+    key = (seq_len, depth_seq_len, num_depth_layers, str(device), dtype, past_len)
+    cached = _MASK_CACHE.get(key)
+    if cached is not None:
+        return cached
+
     total_seq_kv_len = past_len + seq_len
-    total_kv_len = total_seq_kv_len + depth_seq_len
 
-    # Start with all masked
-    mask = torch.full((seq_len, total_kv_len), float("-inf"), device=device, dtype=dtype)
+    q_pos = torch.arange(past_len, past_len + seq_len, device=device)  # [S]
 
-    # Part 1: Causal mask for sequence KV
-    for i in range(seq_len):
-        # Can attend to all past positions + current and previous positions
-        mask[i, : past_len + i + 1] = 0.0
+    # Part 1: Causal mask for sequence KV — query i sees kv positions <= past_len + i.
+    kv_pos = torch.arange(total_seq_kv_len, device=device)
+    allowed = kv_pos[None, :] <= q_pos[:, None]  # [S, total_seq_kv_len]
 
-    # Part 2: Block-diagonal mask for depth KV
-    # Each depth entry at position t from any layer can be attended to by query at position t
+    # Part 2: Block-diagonal mask for depth KV. The depth KV is laid out as
+    # num_depth_layers blocks of orig_seq_len entries; a query may attend only
+    # to the depth entries at its own token position (one per layer).
     if depth_seq_len > 0 and num_depth_layers > 0:
         orig_seq_len = depth_seq_len // num_depth_layers
-        for i in range(seq_len):
-            # Query position i (accounting for past_len offset)
-            query_pos = past_len + i
-            # This query can attend to depth entries at the same token position
-            # across all layers. For each layer l, the depth entry for position t
-            # is at offset: total_seq_kv_len + l * orig_seq_len + t
-            if query_pos < orig_seq_len:
-                for layer_i in range(num_depth_layers):
-                    depth_offset = total_seq_kv_len + layer_i * orig_seq_len + query_pos
-                    if depth_offset < total_kv_len:
-                        mask[i, depth_offset] = 0.0
+        depth_tok = torch.arange(depth_seq_len, device=device) % orig_seq_len  # [D]
+        depth_allowed = depth_tok[None, :] == q_pos[:, None]  # [S, D]
+        allowed = torch.cat([allowed, depth_allowed], dim=1)
 
-    return mask.unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, total_kv_len)
+    zero = torch.zeros((), device=device, dtype=dtype)
+    neg_inf = torch.full((), float("-inf"), device=device, dtype=dtype)
+    mask = torch.where(allowed, zero, neg_inf)
+    mask = mask.unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, total_kv_len)
+
+    if len(_MASK_CACHE) >= _MASK_CACHE_MAX:
+        _MASK_CACHE.pop(next(iter(_MASK_CACHE)))
+    _MASK_CACHE[key] = mask
+    return mask

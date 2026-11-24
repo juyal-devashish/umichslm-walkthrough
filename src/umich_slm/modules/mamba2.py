@@ -131,6 +131,12 @@ class Mamba2SSM(nn.Module):
         # Output projection
         self.out_proj = nn.Linear(self.d_inner, d_model, bias=bias)
 
+        # Intra-document masking (W2): boolean [B, L] doc-start mask stashed by the
+        # model per forward (True at each packed document's first token). When set,
+        # both the causal short conv and the SSM recurrence are prevented from
+        # crossing document boundaries. None => single-doc / cached-decode.
+        self._intra_doc_start = None
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -149,18 +155,31 @@ class Mamba2SSM(nn.Module):
         """
         batch_size, seq_len, _ = hidden_states.shape
 
+        # Intra-document masking: use the stashed doc-start mask only on the full-
+        # sequence training path (no cache) and only when it matches this length.
+        doc_start = getattr(self, "_intra_doc_start", None)
+        if doc_start is not None and (
+            use_cache or cache is not None or doc_start.shape[-1] != seq_len
+        ):
+            doc_start = None
+
         # Input projection -> x_ssm and z gate
         xz = self.in_proj(hidden_states)  # [B, L, 2 * d_inner]
         x_ssm, z = xz.chunk(2, dim=-1)  # each [B, L, d_inner]
 
-        # Conv1d (causal)
-        x_ssm = self._apply_conv(x_ssm, cache)
+        # Conv1d (causal). With a doc-start mask, use the boundary-safe variant so
+        # the short conv never bleeds the last (d_conv-1) tokens of one document into
+        # the first tokens of the next.
+        if doc_start is not None:
+            x_ssm = self._apply_conv_intra_doc(x_ssm, doc_start)
+        else:
+            x_ssm = self._apply_conv(x_ssm, cache)
 
         # SiLU activation after conv
         x_ssm = F.silu(x_ssm)
 
         # SSM scan
-        y, new_ssm_state = self._ssm_scan(x_ssm, cache)
+        y, new_ssm_state = self._ssm_scan(x_ssm, cache, doc_start=doc_start)
 
         # Skip connection with D
         y = y + self.D.unsqueeze(0).unsqueeze(0) * x_ssm
@@ -210,6 +229,49 @@ class Mamba2SSM(nn.Module):
             x_t = self.conv1d(x_t)[:, :, :seq_len]  # Truncate to maintain causality
             return x_t.transpose(1, 2)
 
+    def _apply_conv_intra_doc(
+        self,
+        x: torch.Tensor,
+        doc_start: torch.Tensor,
+    ) -> torch.Tensor:
+        """Causal depthwise conv that never crosses a document boundary.
+
+        Computes the same convolution as ``_apply_conv`` (causal left zero padding,
+        truncated to ``seq_len``), but zeros any kernel tap that would reach into a
+        previous packed document. A tap at distance ``i`` back is kept only where the
+        token has at least ``i`` prior tokens *within its own document*. Reduces
+        exactly to ``_apply_conv`` when there is a single document.
+
+        Args:
+            x: Input tensor [batch, seq_len, d_inner] (pre-conv, pre-SiLU).
+            doc_start: Boolean [batch, seq_len]; True at each document's first token.
+
+        Returns:
+            Convolved tensor [batch, seq_len, d_inner].
+        """
+        B, L, C = x.shape
+        k = self.d_conv
+        # within-document position (0-based) = same-doc left context available
+        idx = torch.arange(L, device=x.device).unsqueeze(0).expand(B, L)
+        run_start = torch.where(doc_start, idx, torch.zeros_like(idx))
+        run_start = torch.cummax(run_start, dim=1).values
+        within = idx - run_start  # [B, L]
+
+        w = self.conv1d.weight  # [C, 1, k], depthwise
+        out = torch.zeros_like(x)
+        for i in range(k):  # i = distance back; tap uses weight column (k-1-i)
+            coef = w[:, 0, k - 1 - i]  # [C]
+            if i == 0:
+                shifted = x
+            else:
+                shifted = torch.zeros_like(x)
+                shifted[:, i:, :] = x[:, :-i, :]
+            valid = (within >= i).unsqueeze(-1).to(x.dtype)  # [B, L, 1]
+            out = out + shifted * coef * valid
+        if self.conv1d.bias is not None:
+            out = out + self.conv1d.bias
+        return out
+
     def _get_conv_state(
         self,
         x: torch.Tensor,
@@ -250,6 +312,7 @@ class Mamba2SSM(nn.Module):
         self,
         x: torch.Tensor,
         cache: Optional[Mamba2Cache],
+        doc_start: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Run the selective SSM scan.
 
@@ -283,13 +346,22 @@ class Mamba2SSM(nn.Module):
             h = cache.ssm_state.clone()  # [B, d_inner, d_state]
         else:
             h = torch.zeros(
-                batch_size, d_inner, self.d_state,
-                device=x.device, dtype=x.dtype,
+                batch_size,
+                d_inner,
+                self.d_state,
+                device=x.device,
+                dtype=x.dtype,
             )
 
         # Sequential scan
         outputs = []
         for t in range(seq_len):
+            # Reset the SSM state at packed-document boundaries (before the update),
+            # so a document's first token starts from zero state.
+            if doc_start is not None:
+                reset_t = doc_start[:, t]
+                if reset_t.any():
+                    h = h * (~reset_t).to(h.dtype).view(batch_size, 1, 1)
             dt_t = dt[:, t, :]  # [B, d_inner]
             B_t = B[:, t, :]  # [B, d_state]
             C_t = C[:, t, :]  # [B, d_state]

@@ -33,58 +33,80 @@ CONFIG_DIR = Path("configs/torchtitan")
 #  whether to attempt CPU instantiation, optional tiny-scale overrides)
 VARIANT_SPECS = [
     (
-        "umichslm_pretrain_baseline.toml", 128,
+        "umichslm_pretrain_baseline.toml",
+        128,
         {"num_key_value_heads": 4},
-        True, {},
+        True,
+        {},
     ),
     (
-        "umichslm_pretrain_mla.toml", 128,
+        "umichslm_pretrain_mla.toml",
+        128,
         {"use_mla": True, "mla_kv_lora_rank": 256},
         True,
         # MLA's head_dim args must divide hidden_size sensibly at tiny scale.
-        {"mla_qk_nope_head_dim": 16, "mla_qk_rope_head_dim": 16, "mla_v_head_dim": 16,
-         "mla_kv_lora_rank": 32},
+        {
+            "mla_qk_nope_head_dim": 16,
+            "mla_qk_rope_head_dim": 16,
+            "mla_v_head_dim": 16,
+            "mla_kv_lora_rank": 32,
+        },
     ),
     (
-        "umichslm_pretrain_moe.toml", 128,
+        "umichslm_pretrain_moe.toml",
+        128,
         {"use_moe": True, "moe_expert_intermediate_size": 256},
         True,
         {"moe_expert_intermediate_size": 64},
     ),
     (
-        "umichslm_pretrain_mod.toml", 128,
+        "umichslm_pretrain_mod.toml",
+        128,
         {"use_mod": True},
-        True, {},
+        True,
+        {},
     ),
     (
-        "umichslm_pretrain_mtp.toml", 160,
+        "umichslm_pretrain_mtp.toml",
+        160,
         {"use_mtp": True},
-        True, {},
+        True,
+        {},
     ),
     (
-        "umichslm_pretrain_deltanet_gated.toml", 128,
+        "umichslm_pretrain_deltanet_gated.toml",
+        128,
         {"use_deltanet": True, "deltanet_variant": "gated"},
-        False, {},  # DeltaNet needs FLA kernels — skip CPU instantiation
+        False,
+        {},  # DeltaNet needs FLA kernels — skip CPU instantiation
     ),
     (
-        "umichslm_pretrain_deltanet_kda.toml", 128,
+        "umichslm_pretrain_deltanet_kda.toml",
+        128,
         {"use_deltanet": True, "deltanet_variant": "kda"},
-        False, {},
+        False,
+        {},
     ),
     (
-        "umichslm_pretrain_swa512.toml", 128,
+        "umichslm_pretrain_swa512.toml",
+        128,
         {"sliding_window": 512},
-        True, {},
+        True,
+        {},
     ),
     (
-        "umichslm_pretrain_zcrmsnorm.toml", 128,
+        "umichslm_pretrain_zcrmsnorm.toml",
+        128,
         {"use_zero_centered_rmsnorm": True},
-        True, {},
+        True,
+        {},
     ),
     (
-        "umichslm_pretrain_pope.toml", 144,
+        "umichslm_pretrain_pope.toml",
+        144,
         {"position_embedding_type": "pope"},
-        True, {},
+        True,
+        {},
     ),
 ]
 
@@ -99,27 +121,32 @@ def test_variant_toml_parses_and_has_expected_flags(
     __,
 ):
     cfg = load_toml_config(CONFIG_DIR / filename)
-    assert cfg.model.size in {"small", "qwen3_like_small"}, (
-        f"{filename}: unexpected model.size {cfg.model.size!r}"
-    )
+    assert cfg.model.size in {
+        "small",
+        "qwen3_like_small",
+    }, f"{filename}: unexpected model.size {cfg.model.size!r}"
     eff = cfg.training.per_device_batch_size * cfg.training.gradient_accumulation_steps
-    assert eff == expected_eff_batch, (
-        f"{filename}: effective batch {eff} != expected {expected_eff_batch}"
-    )
+    assert (
+        eff == expected_eff_batch
+    ), f"{filename}: effective batch {eff} != expected {expected_eff_batch}"
     for flag, expected_value in key_flags.items():
-        assert flag in cfg.model.overrides, (
-            f"{filename}: override {flag!r} missing; got {sorted(cfg.model.overrides)}"
-        )
+        assert (
+            flag in cfg.model.overrides
+        ), f"{filename}: override {flag!r} missing; got {sorted(cfg.model.overrides)}"
         actual = cfg.model.overrides[flag]
-        assert actual == expected_value, (
-            f"{filename}: override {flag}={actual!r} != expected {expected_value!r}"
-        )
+        assert (
+            actual == expected_value
+        ), f"{filename}: override {flag}={actual!r} != expected {expected_value!r}"
 
 
 # ------------------------------------------------------- variant tags + run_name
 @pytest.mark.parametrize("filename,_,__,___,____", VARIANT_SPECS)
 def test_variant_run_name_and_output_dir_are_distinct(
-    filename: str, _, __, ___, ____,
+    filename: str,
+    _,
+    __,
+    ___,
+    ____,
 ):
     """No two variant TOMLs should write to the same output dir or run name —
     catches copy-paste mistakes that would have benchmark runs overwrite each
@@ -130,12 +157,12 @@ def test_variant_run_name_and_output_dir_are_distinct(
         # Baseline TOML uses qwen3_like_small + lr3e4 in its run_name
         assert "baseline" in cfg.job.run_name
     else:
-        assert stem in cfg.job.run_name, (
-            f"{filename}: run_name {cfg.job.run_name!r} missing variant stem {stem!r}"
-        )
-        assert stem in cfg.job.output_dir, (
-            f"{filename}: output_dir {cfg.job.output_dir!r} missing variant stem {stem!r}"
-        )
+        assert (
+            stem in cfg.job.run_name
+        ), f"{filename}: run_name {cfg.job.run_name!r} missing variant stem {stem!r}"
+        assert (
+            stem in cfg.job.output_dir
+        ), f"{filename}: output_dir {cfg.job.output_dir!r} missing variant stem {stem!r}"
 
 
 # --------------------------------------------------------- CPU instantiation
@@ -152,9 +179,7 @@ def _tiny_base() -> dict:
     }
 
 
-@pytest.mark.parametrize(
-    "filename,_,__,can_cpu_instantiate,tiny_overrides", VARIANT_SPECS
-)
+@pytest.mark.parametrize("filename,_,__,can_cpu_instantiate,tiny_overrides", VARIANT_SPECS)
 def test_variant_overrides_construct_valid_config(
     filename: str,
     _,
@@ -182,9 +207,9 @@ def test_variant_overrides_construct_valid_config(
 
     # Smoke a forward pass with labels to confirm the loss-fusion path runs.
     import torch
+
     input_ids = torch.randint(0, base["vocab_size"], (1, 8))
-    out = model(input_ids=input_ids, labels=input_ids.clone(),
-                use_cache=False, return_dict=True)
+    out = model(input_ids=input_ids, labels=input_ids.clone(), use_cache=False, return_dict=True)
     assert out.loss is not None
     assert torch.isfinite(out.loss)
 
@@ -199,13 +224,17 @@ def test_variant_overrides_construct_valid_config(
     ],
 )
 def test_dynamic_graph_variants_do_not_set_torch_compile(
-    filename: str, _, __, ___, ____,
+    filename: str,
+    _,
+    __,
+    ___,
+    ____,
 ):
     """MoD/MoE/MTP have dynamic computation graphs (skipped layers, idle
     experts, conditional MTP heads). They must not ship with torch_compile=true
     by default — otherwise Phase 5 needs to revisit them. This guards against
     accidental edits."""
     cfg = load_toml_config(CONFIG_DIR / filename)
-    assert cfg.training.torch_compile is False, (
-        f"{filename}: dynamic-graph variant should not enable torch_compile by default"
-    )
+    assert (
+        cfg.training.torch_compile is False
+    ), f"{filename}: dynamic-graph variant should not enable torch_compile by default"

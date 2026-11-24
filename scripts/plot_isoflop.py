@@ -12,7 +12,7 @@ Usage:
 
     # with custom paths
     python scripts/plot_isoflop.py \
-        --result_dirs /path/to/garvp /path/to/vnagpal/results \
+        --result_dirs /path/to/user /path/to/user/results \
         --output_dir /path/to/output
 """
 
@@ -32,11 +32,11 @@ import numpy as np
 
 # Default paths for Great Lakes - override via --result_dirs and --output_dir
 DEFAULT_RESULT_DIRS = [
-    "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/garvp",
-    "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results",
+    "/path/to/data",
+    "/path/to/data",
 ]
 
-DEFAULT_OUTPUT_DIR = "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/isoflop"
+DEFAULT_OUTPUT_DIR = "/path/to/data"
 
 # Backbone parameter counts from architecture_presets.md
 PARAM_COUNTS = {

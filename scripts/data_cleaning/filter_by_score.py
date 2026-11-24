@@ -14,16 +14,16 @@ per file, not the full dataset size.
 
 Usage:
     python scripts/data_cleaning/filter_by_score.py \\
-        --score_map  /scratch/.../score_map.parquet \\
-        --data_dir   /scratch/.../fineweb-edu-dedup \\
-        --output_dir /scratch/.../filtered \\
+        --score_map  /path/to/data \\
+        --data_dir   /path/to/data \\
+        --output_dir /path/to/data \\
         --threshold  3.0
 
     # Stricter filter
     python scripts/data_cleaning/filter_by_score.py \\
-        --score_map  /scratch/.../score_map.parquet \\
-        --data_dir   /scratch/.../fineweb-edu-dedup \\
-        --output_dir /scratch/.../filtered_strict \\
+        --score_map  /path/to/data \\
+        --data_dir   /path/to/data \\
+        --output_dir /path/to/data \\
         --threshold  4.0 \\
         --workers 4
 """

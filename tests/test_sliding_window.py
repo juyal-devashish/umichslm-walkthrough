@@ -100,13 +100,13 @@ class TestGlobalAttentionLayers:
     def test_every_n_layers_is_global(self):
         """Every N-th layer should use global attention."""
         # With global_attention_every_n_layers=4
-        assert is_global_attention_layer(0, 4) == True   # Layer 0
+        assert is_global_attention_layer(0, 4) == True  # Layer 0
         assert is_global_attention_layer(1, 4) == False  # Layer 1
         assert is_global_attention_layer(2, 4) == False  # Layer 2
         assert is_global_attention_layer(3, 4) == False  # Layer 3
-        assert is_global_attention_layer(4, 4) == True   # Layer 4
+        assert is_global_attention_layer(4, 4) == True  # Layer 4
         assert is_global_attention_layer(5, 4) == False  # Layer 5
-        assert is_global_attention_layer(8, 4) == True   # Layer 8
+        assert is_global_attention_layer(8, 4) == True  # Layer 8
 
     def test_disabled_global_refresh(self):
         """Setting global_attention_every_n_layers <= 0 disables global refresh."""
@@ -125,9 +125,18 @@ class TestGlobalAttentionLayers:
         assert get_attention_pattern_for_layer(3, 8, 4096, 4, "sliding_window") == "local"
 
         # Sliding window with global refresh
-        assert get_attention_pattern_for_layer(0, 8, 4096, 4, "sliding_window_global_refresh") == "global"
-        assert get_attention_pattern_for_layer(1, 8, 4096, 4, "sliding_window_global_refresh") == "local"
-        assert get_attention_pattern_for_layer(4, 8, 4096, 4, "sliding_window_global_refresh") == "global"
+        assert (
+            get_attention_pattern_for_layer(0, 8, 4096, 4, "sliding_window_global_refresh")
+            == "global"
+        )
+        assert (
+            get_attention_pattern_for_layer(1, 8, 4096, 4, "sliding_window_global_refresh")
+            == "local"
+        )
+        assert (
+            get_attention_pattern_for_layer(4, 8, 4096, 4, "sliding_window_global_refresh")
+            == "global"
+        )
 
 
 class TestSlidingWindowCache:
@@ -269,7 +278,10 @@ class TestSlidingWindowModel:
         loaded_model = UMichSLMForCausalLM.from_pretrained(save_path)
 
         assert loaded_model.config.sliding_window == swa_config.sliding_window
-        assert loaded_model.config.global_attention_every_n_layers == swa_config.global_attention_every_n_layers
+        assert (
+            loaded_model.config.global_attention_every_n_layers
+            == swa_config.global_attention_every_n_layers
+        )
 
 
 class TestSlidingWindowNoWindow:

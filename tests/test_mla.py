@@ -182,9 +182,7 @@ class TestMLAAttention:
     def test_mla_gradient_flow(self, mla_config):
         """Gradients should flow through MLA."""
         attn = UMichSLMMLAAttention(mla_config, layer_idx=0)
-        hidden_states = torch.randn(
-            2, 16, mla_config.hidden_size, requires_grad=True
-        )
+        hidden_states = torch.randn(2, 16, mla_config.hidden_size, requires_grad=True)
 
         output, _, _ = attn(hidden_states)
         loss = output.sum()

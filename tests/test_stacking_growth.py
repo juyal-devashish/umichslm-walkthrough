@@ -76,8 +76,15 @@ def _stage2_spec_doubling(*, attention_mode="deltanet_mla", parent_idx: int = 1)
     block_specs = []
     for src in range(4):
         block_specs.append(BlockSpec(source=src, is_inserted=False, block_layout=list(layout)))
-        block_specs.append(BlockSpec(source=src, is_inserted=True, block_layout=list(layout),
-                                     fresh_router=True, router_perturb_std=0.0))
+        block_specs.append(
+            BlockSpec(
+                source=src,
+                is_inserted=True,
+                block_layout=list(layout),
+                fresh_router=True,
+                router_perturb_std=0.0,
+            )
+        )
     return StageSpec(
         stage_index=2,
         attention_mode=attention_mode,

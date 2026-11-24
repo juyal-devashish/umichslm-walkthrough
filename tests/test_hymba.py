@@ -251,9 +251,7 @@ class TestHymbaDynamicCache:
 
     def test_kv_sharing(self):
         """When sharing enabled, adjacent layers reference same KV."""
-        cache = HymbaDynamicCache(
-            num_layers=4, share_kv=True, kv_share_group_size=2
-        )
+        cache = HymbaDynamicCache(num_layers=4, share_kv=True, kv_share_group_size=2)
 
         # Layer 0 is leader for group [0, 1]
         key = torch.randn(2, 4, 8, 16)
@@ -279,9 +277,7 @@ class TestHymbaDynamicCache:
 
     def test_ssm_not_shared(self):
         """SSM states are NOT shared across layers."""
-        cache = HymbaDynamicCache(
-            num_layers=4, share_kv=True, kv_share_group_size=2
-        )
+        cache = HymbaDynamicCache(num_layers=4, share_kv=True, kv_share_group_size=2)
 
         ssm0 = Mamba2Cache(ssm_state=torch.randn(2, 32, 8))
         ssm1 = Mamba2Cache(ssm_state=torch.randn(2, 32, 8))

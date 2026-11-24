@@ -6,8 +6,8 @@ into the tokenizer and resize the model's input/output embeddings accordingly.
 
 Usage:
     python scripts/sft_data/extend_tokenizer.py \\
-        --base_model /scratch/.../fineweb_qwen3_like_small_1.0B_20260410-0114 \\
-        --output_dir /scratch/.../umichslm-base-6tok
+        --base_model /path/to/data \\
+        --output_dir /path/to/data
 """
 from __future__ import annotations
 

@@ -18,7 +18,7 @@ def test_sbatch_header_renders_cluster_resources():
         {
             "partition": "gpu-rtx6000",
             "time": "1:00:00",
-            "account": "cse598s004w26_class",
+            "account": "<account>",
             "nodes": 1,
             "ntasks_per_node": 1,
             "cpus_per_task": 4,
@@ -31,7 +31,7 @@ def test_sbatch_header_renders_cluster_resources():
 
     assert "#SBATCH --job-name=unit-job" in header
     assert "#SBATCH --partition=gpu-rtx6000" in header
-    assert "#SBATCH --account=cse598s004w26_class" in header
+    assert "#SBATCH --account=<account> in header
     assert "#SBATCH --gpus=1" in header
     assert "#SBATCH --mem=64G" in header
     assert "/home/%u/umich-slm/slurm-logs/%x-%j.out" in header
@@ -42,7 +42,7 @@ def test_environment_renders_conda_and_exports():
         {
             "project_dir": "$HOME/umich-slm",
             "slurm": {"conda_env_name": "umich-slm", "log_dir": "/home/%u/logs"},
-            "env": {"HF_HOME": "/scratch/hf", "TOKENIZERS_PARALLELISM": "false"},
+            "env": {"HF_HOME": "/path/to/data", "TOKENIZERS_PARALLELISM": "false"},
             "required_env": ["WANDB_API_KEY"],
         }
     )
@@ -51,7 +51,7 @@ def test_environment_renders_conda_and_exports():
     assert "conda activate umich-slm" in rendered
     assert 'export PROJECT_DIR="$HOME/umich-slm"' in rendered
     assert "mkdir -p slurm-logs" in rendered
-    assert "export HF_HOME=/scratch/hf" in rendered
+    assert "export HF_HOME=/path/to/data" in rendered
     assert "export TOKENIZERS_PARALLELISM=false" in rendered
     assert ': "${WANDB_API_KEY:?Set WANDB_API_KEY before submitting this job}"' in rendered
     assert "export WANDB_API_KEY" in rendered
@@ -61,13 +61,13 @@ def test_environment_renders_conda_env_path():
     rendered = render_environment(
         {
             "slurm": {
-                "conda_env_path": "/scratch/shared envs/umich-slm",
+                "conda_env_path": "/path/to/data envs/umich-slm",
                 "log_dir": "slurm-logs",
             }
         }
     )
 
-    assert "conda activate '/scratch/shared envs/umich-slm'" in rendered
+    assert "conda activate '/path/to/data envs/umich-slm'" in rendered
 
 
 def test_pretrain_script_contains_training_command():
@@ -77,11 +77,11 @@ def test_pretrain_script_contains_training_command():
             "slurm": {"job_name": "pretrain-test", "log_dir": "slurm-logs", "gpus": 1},
             "data": {
                 "dataset": "train_data",
-                "dataset_dir": "/scratch/data",
+                "dataset_dir": "/path/to/data",
                 "eval_dataset": "val_data",
                 "do_eval": True,
             },
-            "outputs": {"root": "/scratch/results/pretrain", "run_prefix": "toy"},
+            "outputs": {"root": "/path/to/data", "run_prefix": "toy"},
             "wandb": {"project": "umich-slm", "entity": "umich-slm"},
             "training": {
                 "size": "qwen3_like_tiny",
@@ -100,7 +100,7 @@ def test_pretrain_script_contains_training_command():
     assert "--dataset train_data" in script
     assert "--eval_dataset val_data" in script
     assert "--target_tokens_b 0.02" in script
-    assert "--output_dir /scratch/results/pretrain/" in script
+    assert "--output_dir /path/to/data" in script
     assert "--wandb_project umich-slm" in script
     assert "--wandb_entity umich-slm" in script
 
@@ -111,13 +111,13 @@ def test_sft_array_maps_learning_rates():
             "project_dir": "$HOME/umich-slm",
             "generated_config_dir": "generated-slurm/sft-configs",
             "slurm": {"job_name": "sft-test", "log_dir": "slurm-logs", "gpus": 1},
-            "outputs": {"root": "/scratch/results/sft", "run_prefix": "sft"},
+            "outputs": {"root": "/path/to/data", "run_prefix": "sft"},
             "wandb": {"project": "sft-project", "entity": "umich-slm"},
             "sft": {
                 "dataset": "umichslm_sft_train",
                 "eval_dataset": "umichslm_sft_val",
                 "base_config": "configs/llama_factory/umichslm_sft.yaml",
-                "model_name_or_path": "/scratch/model",
+                "model_name_or_path": "/path/to/data",
                 "learning_rate": 2e-5,
             },
             "sweep": {"learning_rate": [1e-5, 2e-5, 5e-5]},

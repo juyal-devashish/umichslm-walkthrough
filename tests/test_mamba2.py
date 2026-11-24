@@ -109,7 +109,9 @@ class TestMamba2SSM:
             out_sequential = torch.cat(outputs, dim=1)
 
         # First token should match exactly (no cache difference)
-        torch.testing.assert_close(out_full[:, :1, :], out_sequential[:, :1, :], atol=1e-5, rtol=1e-4)
+        torch.testing.assert_close(
+            out_full[:, :1, :], out_sequential[:, :1, :], atol=1e-5, rtol=1e-4
+        )
 
     def test_gating(self, ssm):
         """Z-gate modulates output (output differs from ungated path)."""

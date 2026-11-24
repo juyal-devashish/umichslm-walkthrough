@@ -8,6 +8,17 @@ content token attends to:
 Each global token attends to all earlier positions (causal among globals only,
 since globals are emitted before content positionally).
 
+Which config key sets the band
+------------------------------
+This layer reads **``config.swa_window``** (default 1024) and nothing else.
+``config.sliding_window`` is a *different* knob, consumed only by
+``attention.py`` / ``mla.py`` — i.e. by the periodic **global** MLA layers
+(``global_attention_every_n_layers``), not by the SWA band here. Setting
+``sliding_window`` to narrow "the window" is a silent no-op for this module:
+a 2026-07 ablation did exactly that and trained three supposedly-different
+w256/w512/w1024 models that were all identical 1024-window runs (they landed
+0.003 apart, inside the 0.0127 seed noise, which is what exposed it).
+
 Implementation notes
 --------------------
 We subclass :class:`UMichSLMAttention` to reuse Q/K/V/o projections, RoPE init,
@@ -44,6 +55,8 @@ class SWAWithGlobalsAttention(UMichSLMAttention):
     ``is_global_attention_layer``), we always build the globals + window mask.
     """
 
+    _full_attention_kind = False  # SWA band; never carries an attn_logit_sink
+
     def __init__(self, config, layer_idx: Optional[int] = None):
         super().__init__(config=config, layer_idx=layer_idx)
         # The model stashes the current number of prepended globals here at the
@@ -53,14 +66,53 @@ class SWAWithGlobalsAttention(UMichSLMAttention):
         self.swa_window: int = int(getattr(config, "swa_window", 1024))
         if self.swa_window <= 0:
             raise ValueError(f"swa_window must be > 0, got {self.swa_window}.")
-        # Force eager/SDPA for the SWA-globals pattern; FA2's window_size band
+        # Force eager/SDPA for the SWA-globals *fallback*; FA2's window_size band
         # cannot natively express "all-globals + sliding window" once content
-        # tokens are more than window away from the prefix.
+        # tokens are more than window away from the prefix. The fast path uses
+        # FlexAttention (see below), which expresses it exactly as a mask_mod.
         impl = getattr(config, "_attn_implementation", "eager")
         if impl == "flash_attention_2":
             self._effective_attn_impl = "sdpa"
         else:
             self._effective_attn_impl = impl
+        # Set per-forward with a FlexAttention BlockMask when the fast path runs;
+        # the parent dispatch picks it up. None => parent uses SDPA/flash/eager.
+        self._flex_block_mask = None
+        # Model-driven flex controls, refreshed every forward by UMichSLMModel:
+        #   _flex_disable: True when the incoming attention_mask carries padding —
+        #     the BlockMask cannot encode it, so flex must yield to the SDPA
+        #     additive path (which composes padding + globals + window + docs).
+        #   _flex_doc_ids / _flex_doc_cache: set when intra-doc masking is active;
+        #     the flex branch then builds a doc-aware BlockMask (globals visible
+        #     across docs, content window confined to its document) instead of
+        #     the shape-cached one. Without these attrs a doc-masked batch would
+        #     silently LEAK cross-document attention on the flex path.
+        self._flex_disable = False
+        self._flex_doc_ids = None
+        self._flex_doc_cache = None
+
+    def _can_use_flex(
+        self, past_key_value, output_attentions, depth_kv_cache, hidden_states
+    ) -> bool:
+        """Whether the FlexAttention fast path applies to this call.
+
+        Restricted to the no-cache (training / full-prefill) CUDA path with no
+        attention dropout, no per-weight output, and no MoDA depth KV — the SDPA
+        fallback covers generation/cache and CPU. PoPE (doubled head dim) also
+        stays on eager.
+        """
+        from .flex_swa import flex_available
+
+        return bool(
+            flex_available()
+            and past_key_value is None
+            and not output_attentions
+            and depth_kv_cache is None
+            and getattr(hidden_states, "is_cuda", False)
+            and float(getattr(self, "attention_dropout", 0.0) or 0.0) == 0.0
+            and not getattr(self, "_use_pope", False)
+            and not getattr(self, "_flex_disable", False)
+        )
 
     def _build_globals_window_mask(
         self,
@@ -103,6 +155,30 @@ class SWAWithGlobalsAttention(UMichSLMAttention):
         use_cache: bool = False,
         depth_kv_cache=None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        # ---- Block-atomic MoD compact path -----------------------------------
+        # When the MoD block runner drives this layer over a gathered (compact)
+        # sequence, it supplies a complete additive mask built from the tokens'
+        # ORIGINAL positions (so the sliding window is honoured despite the
+        # sequence being non-contiguous). Bypass the flex/globals-window build
+        # entirely and let the parent attend under that mask. RoPE still uses the
+        # gathered position_ids passed through.
+        ext_mask = getattr(self, "_mod_external_mask", None)
+        if ext_mask is not None:
+            prev_use_sw = self.use_sliding_window
+            self.use_sliding_window = False
+            try:
+                return super().forward(
+                    hidden_states=hidden_states,
+                    attention_mask=ext_mask,
+                    position_ids=position_ids,
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    depth_kv_cache=depth_kv_cache,
+                )
+            finally:
+                self.use_sliding_window = prev_use_sw
+
         # Build the globals + window mask once and pass it through the parent
         # forward. The parent's mask-extension logic is bypassed because
         # use_sliding_window=False on this class (we don't go through
@@ -118,6 +194,51 @@ class SWAWithGlobalsAttention(UMichSLMAttention):
         kv_len = q_len + past_len
 
         n_globals = int(self.num_protected_prefix)
+
+        # ---- Fast path: FlexAttention block-sparse kernel -------------------
+        # Build (once, cached) a BlockMask for the globals+window pattern and let
+        # the parent dispatch run the fused kernel. Skips the O(seq^2) dense-mask
+        # SDPA path. The mask_mod is verified identical to build_attention_mask.
+        if self._can_use_flex(past_key_value, output_attentions, depth_kv_cache, hidden_states):
+            from .flex_swa import get_block_mask, get_doc_block_mask
+
+            doc_ids = getattr(self, "_flex_doc_ids", None)
+            if doc_ids is not None:
+                # Intra-doc masking active: the BlockMask must also encode the
+                # document blocks or cross-doc attention leaks. Built once per
+                # step via the model-shared per-forward cache.
+                block_mask = get_doc_block_mask(
+                    doc_ids=doc_ids,
+                    num_globals=n_globals,
+                    window=self.swa_window,
+                    step_cache=getattr(self, "_flex_doc_cache", None),
+                )
+            else:
+                block_mask = get_block_mask(
+                    q_len=q_len,
+                    kv_len=kv_len,
+                    num_globals=n_globals,
+                    window=self.swa_window,
+                    device=hidden_states.device,
+                )
+            prev_use_sw = self.use_sliding_window
+            self.use_sliding_window = False
+            self._flex_block_mask = block_mask
+            try:
+                return super().forward(
+                    hidden_states=hidden_states,
+                    attention_mask=None,  # the BlockMask fully encodes the pattern
+                    position_ids=position_ids,
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    depth_kv_cache=depth_kv_cache,
+                )
+            finally:
+                self._flex_block_mask = None
+                self.use_sliding_window = prev_use_sw
+
+        # ---- Fallback: SDPA/eager over a materialized globals+window mask ----
         if n_globals > 0:
             globals_mask = self._build_globals_window_mask(
                 q_len=q_len,

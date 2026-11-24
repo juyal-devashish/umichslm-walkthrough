@@ -3,7 +3,7 @@
 #SBATCH --output=slurm-logs/install-flash-attn-%j.out
 #SBATCH --error=slurm-logs/install-flash-attn-%j.err
 ## --- edit for your site ---
-#SBATCH --account=cse598s004w26_class
+#SBATCH --account=<account>
 #SBATCH --partition=standard
 # Compiling flash-attn is CPU/RAM heavy; GPU optional. Source builds often need 4–12+ h with
 # MAX_JOBS=1 and two arch flags; if the scheduler rejects a long --time, use your site's max

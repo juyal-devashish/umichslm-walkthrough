@@ -153,9 +153,7 @@ class TestDRoPEModel:
             output_without_pe = model(**sample_input)
 
         # Logits should be different
-        assert not torch.allclose(
-            output_with_pe.logits, output_without_pe.logits, atol=1e-6
-        )
+        assert not torch.allclose(output_with_pe.logits, output_without_pe.logits, atol=1e-6)
 
 
 class TestDRoPECallback:
@@ -193,6 +191,7 @@ class TestDRoPECallback:
 
     def test_manually_toggle_invalid_model(self):
         """Test that manually_toggle raises error for invalid model."""
+
         class DummyModel:
             pass
 

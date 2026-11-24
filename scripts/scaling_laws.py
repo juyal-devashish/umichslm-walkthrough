@@ -43,6 +43,7 @@ Usage:
     python scripts/scaling_laws.py optimal --compute_budgets 1e14,1e15,1e16
 """
 
+import warnings
 import argparse
 import json
 import math
@@ -164,7 +165,124 @@ class ModelConfig:
 
     @property
     def num_params(self) -> int:
-        """Estimate total backbone parameters (non-embedding).
+        """Active (non-embedding, non-unembedding) parameters — drives D = C/6N.
+
+        Counted from the *instantiated* model rather than a shape formula, because
+        the formula below is blind to MLA, MoD routers, global tokens, DeltaNet
+        gates, MTP heads and PLE projections. Getting this wrong silently mis-sets
+        the token horizon: qwen3_5_like was under-counted by 8.8% and swa_globals
+        by 2.9%, so both were being over-fed tokens for their IsoFLOP budget.
+
+        Pure *lookup* tables (input embeddings, PLE) and ``lm_head`` are excluded,
+        preserving the original convention. That exclusion is not a fudge: a lookup
+        costs no matmul, which is exactly why Gemma-3n can carry 115M of PLE weight
+        at ~zero FLOPs and report an "E2B / 2B-effective" parameter count. Use
+        :attr:`total_params_real` when you need capacity rather than compute.
+
+        Falls back to the analytic formula if the model cannot be instantiated.
+        """
+        counted = self._count_real_params()
+        if counted is not None:
+            return counted["active"]
+        return self._num_params_formula
+
+    def _count_real_params(self) -> Optional[Dict[str, int]]:
+        """Instantiate the preset and count params by role. Cached per instance."""
+        if getattr(self, "_param_cache", None) is not None:
+            return self._param_cache
+        try:
+            from umich_slm.configs.presets import get_umichslm_config
+            from umich_slm.modeling_umichslm import UMichSLMForCausalLM
+
+            model = UMichSLMForCausalLM(get_umichslm_config(self.name))
+        except Exception as exc:
+            # Falling back to the analytic formula is NOT a harmless degradation:
+            # the formula is blind to MLA / MoD / globals / DeltaNet gates, so N
+            # comes out low and D = C/(6N) comes out proportionally high — the run
+            # is then trained at the wrong token horizon, silently. Observed: a bare
+            # `python3 scripts/scaling_laws.py` (no PYTHONPATH=src) makes the import
+            # fail, and swa_globals_25m is counted as 19.4M instead of 22.5M — a 16%
+            # over-long token budget that nothing downstream would ever flag.
+            # Swallow it, but never quietly.
+            warnings.warn(
+                f"{self.name}: could not instantiate the model to count parameters "
+                f"({type(exc).__name__}: {exc}). Falling back to the analytic formula, "
+                "which UNDERCOUNTS MLA/MoD/globals/DeltaNet and will therefore set the "
+                "IsoFLOP token horizon D = C/(6N) TOO HIGH. Run with PYTHONPATH=src (or "
+                "pip install -e .) before trusting this manifest.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._param_cache = None
+            return None
+
+        total = lookup = head = 0
+        for pname, p in model.named_parameters():
+            n = p.numel()
+            total += n
+            # Pure lookup tables: the input embedding and any per-layer embedding
+            # table. PLE's *projections* (ple_dim -> hidden) are real matmuls and
+            # stay in the active count.
+            is_lookup = "embed_tokens" in pname or (
+                "per_layer_embeddings" in pname and "projs" not in pname
+            )
+            if is_lookup:
+                lookup += n
+            elif "lm_head" in pname:
+                head += n
+
+        # Dynamic-compute adjustment: MoD-routed layers bill at routing capacity
+        # (FFN-only under mod_mlp_only), recurrent-depth core layers bill
+        # E[iterations] times, weight-shared slots bill per execution. Zero for
+        # dense archs. This is what keeps the IsoFLOP horizon honest — billing
+        # MoD as dense over-charges it and under-feeds it tokens.
+        from umich_slm.compute_accounting import model_compute_param_delta
+
+        compute_delta = model_compute_param_delta(model.model, model.config)
+        del model
+        self._param_cache = {
+            "total": total,
+            "lookup": lookup,
+            "lm_head": head,
+            "active": total - lookup - head,
+            "compute": int(round(total - lookup - head + compute_delta)),
+        }
+        return self._param_cache
+
+    @property
+    def num_params_compute(self) -> int:
+        """Per-token *compute* params — the N in the IsoFLOP horizon D = C/(6N).
+
+        Equals :attr:`num_params` for dense archs. For dynamic-compute archs
+        (MoD, MoD-MLP, recurrent depth) it reflects the expected per-token cost:
+        routed layers discounted by capacity, looped layers multiplied by
+        E[iterations]. Capacity-axis analyses (the L(N,D) fit's N) should keep
+        using :attr:`num_params` / :attr:`total_params_real`; only the token
+        budget and FLOP bookkeeping use this. NOTE: this changed the horizon for
+        the pre-existing ``mod`` and ``swa_globals*`` arms too — pre-fix screen
+        rungs are not comparable to post-fix rungs.
+        """
+        counted = self._count_real_params()
+        if counted is not None:
+            return counted["compute"]
+        return self.num_params
+
+    @property
+    def total_params_real(self) -> int:
+        """Every trainable parameter, including lookup tables and lm_head.
+
+        This is the number that matters for a *parameter* budget (the 1B target)
+        and for the L(N,D) fit's capacity axis — gemma_25m is 167M here versus a
+        22.8M active count, and that gap is the whole Gemma-3n trade.
+        """
+        counted = self._count_real_params()
+        if counted is not None:
+            return counted["total"]
+        return self._num_params_formula + 56000 * self.hidden_size
+
+    @property
+    def _num_params_formula(self) -> int:
+        """Legacy analytic estimate — fallback only. See :attr:`num_params`.
 
         For hybrid models (e.g. qwen3_5_like) the architecture alternates between
         gated DeltaNet layers and standard attention layers. DeltaNet layers have
@@ -213,13 +331,17 @@ class ModelConfig:
     @property
     def num_params_with_embeddings(self) -> int:
         """Estimate total parameters including embeddings."""
-        vocab_size = 49152  # SmolLM2 tokenizer
+        vocab_size = 56000  # SuperBPE production tokenizer (umich_slm.tokenizer_defaults)
         embedding_params = vocab_size * self.hidden_size
         return self.num_params + embedding_params
 
     def flops_per_token(self) -> int:
-        """Estimate FLOPs per token for training (forward + backward)."""
-        return 6 * self.num_params
+        """Estimate FLOPs per token for training (forward + backward).
+
+        Uses compute params so dynamic-compute archs (MoD/recurrent depth) are
+        billed by what they actually execute per token, not their param count.
+        """
+        return 6 * self.num_params_compute
 
     def estimate_training_flops(self, num_tokens: int) -> float:
         """Estimate total training FLOPs for a given number of tokens."""
@@ -239,6 +361,11 @@ class ScalingExperiment:
     eval_dataset: str
     partition: Optional[str] = None # per-experiment partition override
     job_id: Optional[str] = None    # SLURM job ID after submission
+    # When set, emit the Delphi recipe flags (AdamH/WSD/token-horizon LR) into the
+    # training command. dict of the recipe *formula inputs* consumed by
+    # pretrain_fineweb.py's --delphi_* args; the runtime recomputes the LR/β₂/ε from
+    # them + the token horizon. None => plain path (current behaviour).
+    delphi: Optional[Dict[str, Any]] = None
 
     @property
     def experiment_name(self) -> str:
@@ -292,6 +419,19 @@ ARCHITECTURE_PRESET_NAMES: tuple[str, ...] = (
     "Griffin_tiny",
     "Griffin_xsmall",
     "Griffin_small",
+    # Delphi-style width-scaling (openathena.ai/blog/delphi)
+    "delphi_10m",
+    "delphi_25m",
+    "delphi_50m",
+    "delphi_100m",
+)
+
+# Matched-N cross-architecture sweep presets (presets.py SWEEP_ARCHS): one shared
+# backbone shape per size, differing only in architecture flags. ``<arch>_<size>``.
+ARCHITECTURE_PRESET_NAMES = ARCHITECTURE_PRESET_NAMES + tuple(
+    f"{_arch}_{_size}"
+    for _arch in _presets.SWEEP_ARCHS
+    for _size in ("10m", "25m", "50m", "100m")
 )
 
 
@@ -303,14 +443,21 @@ def _build_architecture_model_configs() -> Dict[str, ModelConfig]:
             "scaling_laws.py ARCHITECTURE_PRESET_NAMES includes presets not in presets.py: "
             + ", ".join(missing)
         )
-    return {
-        name: ModelConfig(
+    configs: Dict[str, ModelConfig] = {}
+    for name in ARCHITECTURE_PRESET_NAMES:
+        cfg = get_preset_info(name)
+        configs[name] = ModelConfig(
             name=name,
-            config_dict=get_preset_info(name),
+            config_dict=cfg,
             total_params=estimate_parameters(name),
+            hidden_size=int(cfg.get("hidden_size", 0)),
+            num_hidden_layers=int(cfg.get("num_hidden_layers", 0)),
+            num_attention_heads=int(cfg.get("num_attention_heads", 0) or 0),
+            intermediate_size=int(cfg.get("intermediate_size", 0) or 0),
+            num_key_value_heads=cfg.get("num_key_value_heads"),
+            hybrid_attention_ratio=cfg.get("hybrid_attention_ratio"),
         )
-        for name in ARCHITECTURE_PRESET_NAMES
-    }
+    return configs
 
 
 MODEL_CONFIGS = _build_architecture_model_configs()
@@ -331,35 +478,17 @@ def _format_mlp_for_list(cfg: Dict[str, Any]) -> str:
     m = cfg.get("intermediate_size")
     return str(m) if m is not None else "-"
 
-DATASET_CONFIGS = {
-    20: {
-        "dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_train_20M",
-        "dataset_dir": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/20M",
-        "eval_dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_val_0.6M",
-    },
-    40: {
-        "dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_train_40M",
-        "dataset_dir": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/40M",
-        "eval_dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_val_1.2M",
-    },
-    200: {
-        "dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_train_200M",
-        "dataset_dir": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/200M",
-        "eval_dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_val_6M",
-    },
-    500: {
-        "dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_train_500M",
-        "dataset_dir": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/500M",
-        "eval_dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_val_15M",
-    },
-    1000: {
-        "dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_train_1000M",
-        "dataset_dir": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/1B",
-        "eval_dataset": "mix_code10_math5_math_reasoning5_textbook20_web60_val_30M",
-    },
+# Single ~15B-token natural-mix dataset (DATA_SOURCING_PLAN.md §4). Every run
+# subsets its D = C/(6N) tokens from this one dataset, so all budgets map to it.
+# Built by scripts/prepare_mix_dataset.py (--mix_name pretrain_natural_v1).
+_NATURAL_MIX = {
+    "dataset": "pretrain_natural_v1_train_15000M",
+    "dataset_dir": "/path/to/data",
+    "eval_dataset": "pretrain_natural_v1_val_450M",
 }
+DATASET_CONFIGS = {b: dict(_NATURAL_MIX) for b in (20, 40, 200, 500, 1000, 2000, 5000, 10000, 15000)}
 
-TOKEN_COUNTS_M = [20, 40, 200, 500, 1000]  # Training tokens in millions
+TOKEN_COUNTS_M = [20, 40, 200, 500, 1000]  # Training tokens in millions (chinchilla path)
 
 
 # ============================================================================
@@ -367,10 +496,43 @@ TOKEN_COUNTS_M = [20, 40, 200, 500, 1000]  # Training tokens in millions
 # ============================================================================
 
 def compute_optimal_lr(num_params: int, base_lr: float = 3e-4) -> float:
-    """Compute learning rate scaled by model size."""
+    """Legacy μP-style LR scaling: η ∝ √(N_ref / N).
+
+    Retained for reproducing pre-Delphi sweeps. New experiments should call
+    :func:`compute_horizon_lr` instead, which is token-horizon aware.
+    """
     base_params = 125e6
     scale = math.sqrt(base_params / num_params)
     return max(1e-5, min(1e-3, base_lr * scale))
+
+
+def compute_horizon_lr(
+    *,
+    num_params: int,
+    tokens: float,
+    batch: int,
+    group: str = "proj",
+    eta0_proj: float = 6.30e-3,
+    eta0_adam: float = 6.56e-4,
+    batch_ref: int = 64,
+    token_ref: float = 2.5e9,
+    horizon_exp: float = 0.30,
+) -> float:
+    """Delphi-style token-horizon-aware LR.
+
+    * ``group="proj"`` → η_proj = η₀·√(B/B₀)·(T₀/T)^horizon_exp
+    * ``group="adam"`` → η_adam = η₀,adam·√(B·T₀/(B₀·T))
+
+    ``num_params`` is accepted for symmetry but not used — Delphi shows that
+    a width-aware η₀ + Hyperball already absorbs the width dependence, so
+    the LR depends on (B, T) only. Pass it through for logging.
+    """
+    del num_params  # See docstring.
+    if group == "proj":
+        return eta0_proj * math.sqrt(batch / batch_ref) * (token_ref / max(1.0, tokens)) ** horizon_exp
+    if group == "adam":
+        return eta0_adam * math.sqrt((batch * token_ref) / (batch_ref * max(1.0, tokens)))
+    raise ValueError(f"compute_horizon_lr: unknown group {group!r}; expected 'proj' or 'adam'")
 
 
 def compute_batch_size(num_params: int, max_batch: int = 32) -> tuple[int, int]:
@@ -647,11 +809,11 @@ def generate_slurm_script(
     if slurm_config.mem:
         slurm_header += f"\n#SBATCH --mem={slurm_config.mem}"
     if slurm_config.account:
-        slurm_header += f"\n#SBATCH --account={slurm_config.account}"
+        slurm_header += f"\n#SBATCH --account=<account>
     if slurm_config.qos:
         slurm_header += f"\n#SBATCH --qos={slurm_config.qos}"
     if slurm_config.mail_account:
-        slurm_header += f"\n#SBATCH --mail-user={slurm_config.mail_account}@umich.edu"
+        slurm_header += f"\n#SBATCH --mail-user=user@example.com
         if slurm_config.mail_type:
             slurm_header += f"\n#SBATCH --mail-type={slurm_config.mail_type}"
 
@@ -709,6 +871,29 @@ echo "========================================"
     # Environment variables
     env_vars_str = " \\\n  ".join(f"{k}={v}" for k, v in slurm_config.env_vars.items())
 
+    # Delphi recipe flags: when present, pretrain_fineweb.py's --delphi_recipe path
+    # OVERRIDES --learning_rate/--optimizer/--lr_scheduler and recomputes the
+    # token-horizon LR (+ AdamH/WSD/β₂/ε) from these formula inputs at runtime.
+    delphi_flags = ""
+    if exp.delphi:
+        r = exp.delphi
+        delphi_flags = (
+            " \\\n  --delphi_recipe"
+            f" \\\n  --delphi_optimizer {r['optimizer']}"
+            f" \\\n  --delphi_schedule {r['schedule']}"
+            f" \\\n  --delphi_warmup_frac {r['warmup_frac']}"
+            f" \\\n  --delphi_decay_frac {r['decay_frac']}"
+            f" \\\n  --delphi_eta0_proj {r['eta0_proj']:.6e}"
+            f" \\\n  --delphi_eta0_adam {r['eta0_adam']:.6e}"
+            f" \\\n  --delphi_batch_ref {int(r['batch_ref'])}"
+            f" \\\n  --delphi_token_ref {r['token_ref']:.6e}"
+            f" \\\n  --delphi_horizon_exp {r['horizon_exp']}"
+            f" \\\n  --delphi_epsilon0 {r['epsilon0']:.6e}"
+            f" \\\n  --delphi_beta2_max {r['beta2_max']}"
+            f" \\\n  --delphi_beta2_min {r['beta2_min']}"
+            f" \\\n  --delphi_grad_clip {r['grad_clip']}"
+        )
+
     # Training command
     # --val_percent 0: all D tokens go to training; evaluation uses --eval_dataset separately
     training_cmd = f"""{env_vars_str} \\
@@ -722,7 +907,7 @@ echo "========================================"
   --val_percent 0 \\
   --dataset {exp.dataset} \\
   --dataset_dir {exp.dataset_dir} \\
-  --do_eval --eval_dataset {exp.eval_dataset} --eval_steps 200
+  --do_eval --eval_dataset {exp.eval_dataset} --eval_steps 200{delphi_flags}
 """
 
     footer = f"""
@@ -928,6 +1113,281 @@ def print_scaling_summary(experiments: List[ScalingExperiment]):
 
 
 # ============================================================================
+# Delphi-style sweep generator (openathena.ai/blog/delphi)
+# ============================================================================
+
+DELPHI_DEFAULT_ARCHS: tuple[str, ...] = (
+    "vanilla",        # vanilla dense transformer: full MHA, RoPE/RMSNorm/SwiGLU
+    "qwen3_like",     # dense GQA softmax baseline (Qwen3-style)
+    "qwen3_5_like",   # 3:1 Gated DeltaNet / attention hybrid (Qwen3.5-style)
+    "mod",            # plain Mixture-of-Depths
+    "swa_globals",    # MoD + sliding-window attention + persistent globals (PRIMARY)
+    "gemma",          # Gemma-3n/4 style: alt local/global SWA + PLE + MatFormer
+    # Depth axis on the primary arch. Block-atomic MoD needs L = 4*(R+2) to expose
+    # R routed (skippable) blocks between dense I/O blocks, so depth *is* the
+    # "how much can MoD skip" knob — and the 1B target is far deeper than the
+    # screen. These are matched-N, deeper-and-narrower variants of swa_globals:
+    #   swa_globals        L=12 -> 1 routed block
+    #   swa_globals_deep   L=16 -> 2 routed blocks
+    #   swa_globals_deeper L=20 -> 3 routed blocks
+    "swa_globals_deep",
+    "swa_globals_deeper",
+)
+
+# Size suffix used for delphi sweeps. Maps shorthand → preset suffix.
+DELPHI_SIZE_LABELS: tuple[str, ...] = ("10m", "25m", "50m", "100m")
+
+# Default IsoFLOP budgets in the screening pass (4 budgets so each size lands
+# in a different IsoFLOP slice). Held-out lives one decade above.
+DELPHI_SCREEN_BUDGETS: tuple[float, ...] = (1e17, 3e17, 1e18, 3e18)
+DELPHI_HOLDOUT_BUDGET: float = 1e19
+
+
+def _delphi_preset_name(arch: str, size_label: str) -> Optional[str]:
+    """Map (arch, size) to a preset registered in MODEL_CONFIGS.
+
+    Mapping rules
+    -------------
+    * Exact matched-N preset ``<arch>_<size>`` (delphi_10m, swa_globals_50m,
+      gemma_100m, qwen3_like_25m, …) is preferred when it exists. These share a
+      common backbone shape per size so the cross-architecture comparison is
+      param-matched (see presets.py SWEEP_ARCHS).
+    * ``delphi`` → ``delphi_<size>``.
+    * Legacy fallback for older families: 10m→tiny, 25m/50m→xsmall, 100m→small.
+      The point estimate uses the preset's actual param count, not the label.
+    """
+    # Prefer the exact matched-N sweep preset (covers delphi + the 5 sweep archs).
+    exact = f"{arch}_{size_label}"
+    if exact in MODEL_CONFIGS:
+        return exact
+    if arch == "delphi":
+        return f"delphi_{size_label}"
+    size_map = {
+        "10m": "tiny",
+        "25m": "xsmall",
+        "50m": "xsmall",
+        "100m": "small",
+    }
+    suffix = size_map.get(size_label)
+    if suffix is None:
+        return None
+    candidate = f"{arch}_{suffix}"
+    if candidate in MODEL_CONFIGS:
+        return candidate
+    return None
+
+
+def _delphi_batch_size_for(num_params: int, arch: str = "") -> tuple[int, int]:
+    """Return (per_device_batch, grad_accum) targeting global batch ≈ 64."""
+    # Conservative ladder; the Delphi recipe is batch-aware via the LR so the
+    # exact split between micro-batch and grad-accum doesn't change the LR.
+    # Every branch below holds global batch at 64, which keeps the LR / β₂ / ε
+    # rules (and hence cross-arch comparability) identical.
+    if "mtp" in arch:
+        # MTP materialises a SECOND full-vocab logits tensor, and the CE upcasts
+        # it to fp32: 32 x 2048 x 56000 x 4B = 14.7 GB, which OOMs an A6000 on the
+        # backward. The main head dodges this via chunked CE; the MTP head does
+        # not. A quarter-size micro-batch brings that tensor to ~3.7 GB.
+        return 8, 8
+    if "moda" in arch:
+        # MoDA extends every layer's KV with up to 4 depth entries (5x KV length)
+        # and runs SDPA with an explicit additive mask, which forces the
+        # math/mem-inefficient kernels: attention scores scale with B*H*T*(5T).
+        # A quarter-size micro-batch keeps that under the A6000's 48 GB.
+        return 8, 8
+    if arch.startswith("mop"):
+        # MoP's realized implementation runs every lane densely (bitwise equal
+        # to gathering, see modules/pathways.py) — at [0,2,4] lanes that's ~1.8x
+        # the algorithmic compute/activations, plus a full extra causal
+        # cross-attention map per lane block. Half-size micro-batch for slack.
+        # (Covers the whole family: mop, mop_dense, mop_kv, mop_nested, mop_rec.)
+        return 16, 4
+    if num_params < 30e6:
+        return 32, 2  # 64 global
+    if num_params < 80e6:
+        return 16, 4
+    return 8, 8
+
+
+def generate_delphi_experiments(
+    *,
+    archs: List[str],
+    sizes: List[str],
+    budgets: List[float],
+    seeds: List[int],
+    stage_archs: List[str],
+    pass_name: str,
+    slurm_config: Optional["SlurmConfig"] = None,
+    recipe_overrides: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Build the list of run specs for a Delphi-style sweep.
+
+    Returns a list of dicts (one per run) that the caller writes into both a
+    sweep manifest and into individual SLURM scripts. Each entry carries:
+
+    * ``arch``, ``size_label``, ``preset_name``
+    * ``params``, ``tokens``, ``flops``
+    * ``batch_size``, ``grad_accum``, ``learning_rate``, ``learning_rate_adam``
+    * ``schedule``, ``optimizer``, ``grad_clip``, ``beta2``, ``epsilon``
+    * ``seed``, ``stages`` (list of stage dicts for staged variants),
+      ``pass`` (``"screen"`` or ``"holdout"``), ``held_out`` (bool).
+    """
+    overrides = dict(recipe_overrides or {})
+    eta0_proj = float(overrides.get("eta0_proj", 6.30e-3))
+    eta0_adam = float(overrides.get("eta0_adam", 6.56e-4))
+    batch_ref = int(overrides.get("batch_ref", 64))
+    token_ref = float(overrides.get("token_ref", 2.5e9))
+    horizon_exp = float(overrides.get("horizon_exp", 0.30))
+    grad_clip = float(overrides.get("grad_clip", 0.1))
+    schedule = str(overrides.get("schedule", "wsd"))
+    optimizer = str(overrides.get("optimizer", "adamh"))
+    warmup_frac = float(overrides.get("warmup_frac", 0.10))
+    decay_frac = float(overrides.get("decay_frac", 0.20))
+    epsilon0 = float(overrides.get("epsilon0", 1.85e-8))
+    beta2_max = float(overrides.get("beta2_max", 0.9999))
+    beta2_min = float(overrides.get("beta2_min", 0.9))
+
+    runs: List[Dict[str, Any]] = []
+    for arch in archs:
+        for size in sizes:
+            preset = _delphi_preset_name(arch, size)
+            if preset is None or preset not in MODEL_CONFIGS:
+                print(f"  !! delphi_sweep: no preset for ({arch}, {size}); skipping")
+                continue
+            mc = MODEL_CONFIGS[preset]
+            n = mc.num_params
+            # The token horizon is set from *compute* params: dynamic-compute
+            # archs (MoD / MoD-MLP / recurrent depth) execute fewer (or more)
+            # params per token than they own, and billing them as dense
+            # mis-feeds them tokens for the IsoFLOP budget. n (capacity) is
+            # still what gets reported to the L(N,D) fit.
+            n_compute = mc.num_params_compute
+            for c in budgets:
+                d = c / (6.0 * n_compute)
+                if d < 1e6:
+                    continue
+                per_dev_b, accum = _delphi_batch_size_for(n, arch)
+                global_batch = per_dev_b * accum
+                lr_proj = compute_horizon_lr(
+                    num_params=n, tokens=d, batch=global_batch, group="proj",
+                    eta0_proj=eta0_proj, eta0_adam=eta0_adam,
+                    batch_ref=batch_ref, token_ref=token_ref, horizon_exp=horizon_exp,
+                )
+                lr_adam = compute_horizon_lr(
+                    num_params=n, tokens=d, batch=global_batch, group="adam",
+                    eta0_proj=eta0_proj, eta0_adam=eta0_adam,
+                    batch_ref=batch_ref, token_ref=token_ref, horizon_exp=horizon_exp,
+                )
+                # β₂ clip rule and ε rule
+                beta2 = min(max(beta2_max ** (global_batch / batch_ref), beta2_min), beta2_max)
+                eps = epsilon0 * math.sqrt((batch_ref * d) / (global_batch * token_ref))
+                # Determine staged variants for this (arch, size).
+                stage_variants = ["single"]
+                if arch in stage_archs and size in ("50m", "100m"):
+                    stage_variants.append("staged")
+                for variant in stage_variants:
+                    for seed in seeds:
+                        run = {
+                            "arch": arch,
+                            "size_label": size,
+                            "preset_name": preset,
+                            "variant": variant,
+                            "params": int(n),
+                            "params_compute": int(n_compute),
+                            "tokens": int(d),
+                            "flops": c,
+                            "batch_size": per_dev_b,
+                            "grad_accum": accum,
+                            "global_batch": global_batch,
+                            "learning_rate": lr_proj,
+                            "learning_rate_adam": lr_adam,
+                            "schedule": schedule,
+                            "optimizer": optimizer,
+                            "grad_clip": grad_clip,
+                            "beta2": beta2,
+                            "epsilon": eps,
+                            "warmup_frac": warmup_frac,
+                            "decay_frac": decay_frac,
+                            "seed": int(seed),
+                            "pass": pass_name,
+                            "held_out": pass_name == "holdout",
+                            # Recipe *formula inputs* consumed by pretrain_fineweb.py's
+                            # --delphi_* args (it recomputes LR/β₂/ε from these + the
+                            # token horizon at runtime). Emitted into the training cmd
+                            # by generate_slurm_script so the run actually uses AdamH/WSD.
+                            "recipe": {
+                                "optimizer": optimizer,
+                                "schedule": schedule,
+                                "warmup_frac": warmup_frac,
+                                "decay_frac": decay_frac,
+                                "eta0_proj": eta0_proj,
+                                "eta0_adam": eta0_adam,
+                                "batch_ref": batch_ref,
+                                "token_ref": token_ref,
+                                "horizon_exp": horizon_exp,
+                                "epsilon0": epsilon0,
+                                "beta2_max": beta2_max,
+                                "beta2_min": beta2_min,
+                                "grad_clip": grad_clip,
+                            },
+                        }
+                        if variant == "staged":
+                            # Build a two-stage plan: train smaller→grown.
+                            parent_label = "10m" if size == "50m" else ("25m" if size == "100m" else None)
+                            if parent_label is None:
+                                continue
+                            parent_preset = _delphi_preset_name(arch, parent_label)
+                            if parent_preset is None:
+                                continue
+                            parent_n = MODEL_CONFIGS[parent_preset].num_params
+                            # 30 % of tokens in stage 1, 70 % in stage 2.
+                            d1 = int(d * 0.3)
+                            d2 = int(d * 0.7)
+                            run["stages"] = [
+                                {"params": parent_n, "tokens": d1, "arch": arch, "preset": parent_preset},
+                                {"params": int(n), "tokens": d2, "arch": arch, "preset": preset},
+                            ]
+                        runs.append(run)
+    return runs
+
+
+def write_delphi_manifest(
+    runs: List[Dict[str, Any]], output_dir: Path, *, append: bool = True
+) -> Path:
+    """Write/append the sweep manifest at ``<output_dir>/sweep_manifest.json``.
+
+    Append mode merges by ``run_id`` (preset+variant+seed+flops+pass). On
+    conflict the new entry overwrites; this lets re-runs update metadata
+    (e.g. a job ID) without losing other entries.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "sweep_manifest.json"
+    existing: Dict[str, Dict[str, Any]] = {}
+    if append and path.exists():
+        try:
+            with open(path) as f:
+                blob = json.load(f)
+            for entry in blob.get("runs", []):
+                existing[entry["run_id"]] = entry
+        except (json.JSONDecodeError, KeyError):
+            existing = {}
+    for r in runs:
+        run_id = (
+            f"{r['arch']}-{r['preset_name']}-{r['variant']}-c{r['flops']:.0e}-s{r['seed']}-{r['pass']}"
+        )
+        r["run_id"] = run_id
+        existing[run_id] = r
+    blob = {
+        "schema_version": 1,
+        "runs": sorted(existing.values(), key=lambda x: (x["arch"], x["params"], x["flops"], x["seed"])),
+    }
+    with open(path, "w") as f:
+        json.dump(blob, f, indent=2)
+    return path
+
+
+# ============================================================================
 # CLI Argument Parsing
 # ============================================================================
 
@@ -952,7 +1412,7 @@ def add_slurm_args(parser: argparse.ArgumentParser):
         "--mail_account",
         type=str,
         default=None,
-        help="Uniqname for Slurm mail (sets --mail-user=<uniqname>@umich.edu); empty string disables",
+        help="Uniqname for Slurm mail (sets --mail-user=user@example.com empty string disables",
     )
 
 
@@ -1099,6 +1559,79 @@ Examples:
     chin_parser.add_argument("--dry_run", action="store_true",
                              help="Show what would be submitted without actually submitting")
     add_slurm_args(chin_parser)
+
+    # Delphi-style sweep command
+    delphi_parser = subparsers.add_parser(
+        "delphi_sweep",
+        help="Generate Delphi-style IsoFLOP sweep (screening or held-out pass)",
+    )
+    delphi_parser.add_argument("--output_dir", type=str, required=True,
+                               help="Output directory; SLURM scripts + sweep_manifest.json land here")
+    delphi_parser.add_argument(
+        "--pass",
+        dest="delphi_pass",
+        choices=("screen", "holdout"),
+        default="screen",
+        help="screen = full IsoFLOP grid (1 seed); holdout = held-out budget only (--seeds)",
+    )
+    delphi_parser.add_argument(
+        "--archs", type=str, default=",".join(DELPHI_DEFAULT_ARCHS),
+        help="Comma-separated architecture families to sweep",
+    )
+    delphi_parser.add_argument(
+        "--sizes", type=str, default=",".join(DELPHI_SIZE_LABELS),
+        help="Comma-separated size labels (10m,25m,50m,100m)",
+    )
+    delphi_parser.add_argument(
+        "--budgets", type=str,
+        default=",".join(f"{b:.0e}" for b in DELPHI_SCREEN_BUDGETS),
+        help="Screen-pass compute budgets in FLOPs",
+    )
+    delphi_parser.add_argument(
+        "--holdout_budget", type=float, default=DELPHI_HOLDOUT_BUDGET,
+        help="Held-out compute budget (FLOPs) for --pass holdout",
+    )
+    delphi_parser.add_argument(
+        "--seeds", type=str, default="0",
+        help="Comma-separated seeds (default '0'; holdout pass should use '0,1,2')",
+    )
+    delphi_parser.add_argument(
+        "--stage_archs", type=str, default="swa_globals,mod",
+        help="Comma-separated archs to ALSO emit staged (layer-grown) variants for at "
+             "50m/100m. Each such arch is then screened both flat (stacking off) and "
+             "staged (stacking on) — the FLOPs-saved-by-stacking comparison "
+             "(IMPLEMENTATION_PLAN_SWA.md §3). Default is the primary swa_globals + mod.",
+    )
+    delphi_parser.add_argument("--dataset", type=str, default=None,
+                               help="Dataset name (overrides config)")
+    delphi_parser.add_argument("--dataset_dir", type=str, default=None,
+                               help="Dataset directory (overrides config)")
+    delphi_parser.add_argument("--dry_run", action="store_true",
+                               help="Print sweep plan + write manifest without writing SLURM scripts")
+    # Per-knob recipe flags
+    recipe = delphi_parser.add_argument_group("Recipe knobs (Delphi defaults)")
+    recipe.add_argument("--lr_eta0_proj", type=float, default=6.30e-3)
+    recipe.add_argument("--lr_eta0_adam", type=float, default=6.56e-4)
+    recipe.add_argument("--lr_batch_ref", type=int, default=64)
+    recipe.add_argument("--lr_token_ref", type=float, default=2.5e9)
+    recipe.add_argument("--lr_horizon_exp", type=float, default=0.30)
+    recipe.add_argument("--schedule", type=str, choices=("wsd", "cosine", "linear"), default="wsd")
+    recipe.add_argument("--warmup_frac", type=float, default=0.10)
+    recipe.add_argument("--decay_frac", type=float, default=0.20)
+    recipe.add_argument(
+        "--optimizer",
+        type=str,
+        choices=("adamh", "adamw", "muonh"),
+        default="adamh",
+        help="adamh (default) = Adam+Hyperball on all proj weights; muonh = full "
+        "Delphi hybrid (MuonH hidden + AdamH head + AdamW embed/scalar), single-GPU "
+        "only; adamw = plain baseline.",
+    )
+    recipe.add_argument("--gradient_clip", type=float, default=0.1)
+    recipe.add_argument("--epsilon0", type=float, default=1.85e-8)
+    recipe.add_argument("--beta2_max", type=float, default=0.9999)
+    recipe.add_argument("--beta2_min", type=float, default=0.9)
+    add_slurm_args(delphi_parser)
 
     # Init config command
     init_parser = subparsers.add_parser("init_config", help="Generate a template SLURM config file")
@@ -1305,6 +1838,100 @@ Examples:
 
             submitted = sum(1 for s in summary if s["status"] == "submitted")
             print(f"\nSubmitted {submitted}/{len(summary)} jobs")
+
+    elif args.command == "delphi_sweep":
+        slurm_config = load_slurm_config(args)
+        if args.dataset:
+            slurm_config.dataset = args.dataset
+        if args.dataset_dir:
+            slurm_config.dataset_dir = args.dataset_dir
+
+        archs = [a.strip() for a in args.archs.split(",") if a.strip()]
+        sizes = [s.strip() for s in args.sizes.split(",") if s.strip()]
+        seeds = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
+        stage_archs = [a.strip() for a in args.stage_archs.split(",") if a.strip()]
+        budgets = (
+            [args.holdout_budget]
+            if args.delphi_pass == "holdout"
+            else [float(b.strip()) for b in args.budgets.split(",") if b.strip()]
+        )
+
+        recipe_overrides = {
+            "eta0_proj": args.lr_eta0_proj,
+            "eta0_adam": args.lr_eta0_adam,
+            "batch_ref": args.lr_batch_ref,
+            "token_ref": args.lr_token_ref,
+            "horizon_exp": args.lr_horizon_exp,
+            "schedule": args.schedule,
+            "warmup_frac": args.warmup_frac,
+            "decay_frac": args.decay_frac,
+            "optimizer": args.optimizer,
+            "grad_clip": args.gradient_clip,
+            "epsilon0": args.epsilon0,
+            "beta2_max": args.beta2_max,
+            "beta2_min": args.beta2_min,
+        }
+
+        runs = generate_delphi_experiments(
+            archs=archs, sizes=sizes, budgets=budgets, seeds=seeds,
+            stage_archs=stage_archs, pass_name=args.delphi_pass,
+            slurm_config=slurm_config, recipe_overrides=recipe_overrides,
+        )
+        if not runs:
+            print("delphi_sweep: no runs generated.")
+            return
+
+        # Print a summary table
+        print("\n" + "=" * 110)
+        print(f"Delphi sweep — pass={args.delphi_pass}  archs={archs}  sizes={sizes}")
+        print("=" * 110)
+        print(f"{'arch':<14} {'size':<6} {'variant':<8} {'N':>10} {'D':>10} {'C (FLOPs)':>12} {'B':>4} {'lr_proj':>10} {'lr_adam':>10} {'seed':>5}")
+        print("-" * 110)
+        for r in runs:
+            print(
+                f"{r['arch']:<14} {r['size_label']:<6} {r['variant']:<8} "
+                f"{r['params']/1e6:>9.1f}M {r['tokens']/1e6:>9.1f}M "
+                f"{r['flops']:>12.2e} {r['global_batch']:>4} "
+                f"{r['learning_rate']:>10.2e} {r['learning_rate_adam']:>10.2e} "
+                f"{r['seed']:>5}"
+            )
+        print("-" * 110)
+        print(f"Total runs: {len(runs)}\n")
+
+        output_dir = Path(args.output_dir)
+        manifest_path = write_delphi_manifest(runs, output_dir)
+        print(f"Manifest written to: {manifest_path}")
+
+        if args.dry_run:
+            print("[--dry_run] skipping SLURM script generation.")
+            return
+
+        # Generate SLURM scripts as ScalingExperiment objects (single-stage only;
+        # staged variants get a sibling .stages.json next to the script that the
+        # training stack reads to drive layer growth).
+        scripts_dir = output_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        for r in runs:
+            mc = MODEL_CONFIGS[r["preset_name"]]
+            exp = ScalingExperiment(
+                model_config=mc,
+                num_tokens=int(r["tokens"]),
+                batch_size=int(r["batch_size"]),
+                gradient_accumulation_steps=int(r["grad_accum"]),
+                learning_rate=float(r["learning_rate"]),
+                dataset=slurm_config.dataset,
+                dataset_dir=slurm_config.dataset_dir,
+                eval_dataset=slurm_config.eval_dataset,
+                partition=GPU_BY_SIZE.get(_chinchilla_size_suffix(r["preset_name"]), {}).get("partition"),
+                delphi=r.get("recipe"),
+            )
+            script_path = generate_slurm_script(exp, slurm_config, scripts_dir)
+            # Sidecar JSON with recipe + staged-plan metadata
+            sidecar = {k: v for k, v in r.items() if k != "preset_name"}
+            sidecar["preset_name"] = r["preset_name"]
+            with open(script_path.with_suffix(".recipe.json"), "w") as f:
+                json.dump(sidecar, f, indent=2)
+        print(f"Wrote {len(runs)} SLURM scripts + recipe sidecars in {scripts_dir}")
 
     elif args.command == "init_config":
         config = SlurmConfig()

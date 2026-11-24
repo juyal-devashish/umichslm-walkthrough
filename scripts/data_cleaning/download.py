@@ -16,17 +16,17 @@ Usage:
     python scripts/data_cleaning/download.py \\
         --dataset smollm_corpus \\
         --subset fineweb-edu-dedup \\
-        --local_dir /scratch/.../data/smollm-corpus
+        --local_dir /path/to/data
 
     # Download everything in smollm-corpus
     python scripts/data_cleaning/download.py \\
         --dataset smollm_corpus \\
-        --local_dir /scratch/.../data/smollm-corpus
+        --local_dir /path/to/data
 
     # Download DCLM baseline
     python scripts/data_cleaning/download.py \\
         --dataset dclm \\
-        --local_dir /scratch/.../data/dclm-base \\
+        --local_dir /path/to/data \\
         --max_workers 8
 """
 from __future__ import annotations

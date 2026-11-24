@@ -10,7 +10,7 @@ Supported datasets:
 Usage:
     python scripts/grpo_data/prepare_grpo_math.py \\
         --dataset gsm8k \\
-        --output_dir /scratch/.../grpo_data/v1/gsm8k
+        --output_dir /path/to/data
 
     python scripts/grpo_data/prepare_grpo_math.py \\
         --dataset gsm8k \\
@@ -18,7 +18,7 @@ Usage:
 
     python scripts/grpo_data/prepare_grpo_math.py \\
         --dataset math \\
-        --output_dir /scratch/.../grpo_data/v1/math \\
+        --output_dir /path/to/data \\
         --n 5000
 """
 from __future__ import annotations

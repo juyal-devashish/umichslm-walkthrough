@@ -33,6 +33,21 @@ dependencies = [
     "accelerate>=0.25.0",
     "flash-attn>=2.5.0",
     "flash-linear-attention>=0.1.0",
+    # torchtitan path: Arrow IPC dataset reader (titan/data.py) and run logging.
+    # Previously undeclared -> present in the base env by luck but absent from a
+    # fresh env (e.g. umich-slm-fa2), which crashed the titan loader on `import
+    # pyarrow`. wandb is imported behind a try/except (falls back to metrics.jsonl)
+    # but every training path logs to it, so declare it.
+    "pyarrow>=14.0.0",
+    "wandb>=0.16.0",
+    # numpy and scipy were undeclared and present by luck via torch/transformers.
+    # umich_slm.scaling imports scipy.optimize, scipy.cluster and scipy.spatial at
+    # module level (least-squares multi-start, basin clustering), so the scaling-law
+    # fitter is a hard import failure without it rather than a degraded path.
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    # tomllib is stdlib on py>=3.11; tomli is the backport for older interpreters.
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -117,7 +132,17 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not slow'"
+markers = [
+    # tests/test_eval.py runs the REAL lm-eval-harness against GPT-2. Measured:
+    # hellaswag alone exceeds 230s on one CPU thread, and the `mmlu` entry is a
+    # GROUP of 57 subtasks whose limit=50 applies PER SUBTASK (~11,400 forward
+    # passes at 5-shot), so that file is a multi-hour job. It also produces no
+    # output while running, because pytest captures stdout -- which is why the
+    # suite looked hung at ~23%. Everything else is 1248 passed / 34 skipped in
+    # 229s. Run the slow ones deliberately with:  pytest -m slow
+    "slow: multi-minute or multi-hour tests, deselected by default",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",

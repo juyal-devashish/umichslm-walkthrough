@@ -15,7 +15,7 @@ MODELS = [
 
 HF_HOME = os.environ.get(
     "HF_HOME",
-    "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface",
+    "/path/to/data",
 )
 os.environ["HF_HOME"] = HF_HOME
 

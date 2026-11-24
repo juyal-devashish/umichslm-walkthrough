@@ -28,7 +28,7 @@ text_column = "text"
 seq_len = 2048
 num_workers = 8
 # Tokenizer: defaults to model.init_from. Override here if init_from is null.
-# tokenizer_path = "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/.cache/huggingface/hub/models--HuggingFaceTB--SmolLM2-1.7B-Instruct/snapshots/31b70e2e869a7173562077fd711b654946d38674"
+# tokenizer_path = "/path/to/data"
 
 [optimizer]
 name = "adamw"            # adamw | adamw_fused

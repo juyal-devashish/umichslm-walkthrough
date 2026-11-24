@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=1
 #SBATCH --mem=64G
-#SBATCH --account=cse598s004w26_class
-#SBATCH --mail-user=vnagpal@umich.edu
+#SBATCH --account=<account>
+#SBATCH --mail-user=user@example.com
 #SBATCH --mail-type=END,FAIL
 # Scaling Law Experiment: qwen3_like_small_176M_95Mtok
 # Model: qwen3_like_small (176.2M params)
@@ -51,10 +51,10 @@ if [[ $(hostname) == "sushi"* ]]; then
   export NCCL_P2P_LEVEL=NVL
 fi
 
-HF_HOME=/scratch/cse598s004w26_class_root/cse598s004w26_class/vnagpal/.cache/huggingface \
+HF_HOME=/path/to/data \
   TOKENIZERS_PARALLELISM=false \
   python scripts/pretrain_fineweb.py \
-  --output_dir /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/vnagpal/results/qwen3_like_small_176M_95Mtok/ \
+  --output_dir /path/to/data \
   --size qwen3_like_small \
   --batch_size 16 \
   --gradient_accumulation_steps 8 \
@@ -62,7 +62,7 @@ HF_HOME=/scratch/cse598s004w26_class_root/cse598s004w26_class/vnagpal/.cache/hug
   --target_tokens_b 0.095 \
   --val_percent 0 \
   --dataset mix_code10_math5_math_reasoning5_textbook20_web60_train_200M \
-  --dataset_dir /scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/toy_datasets/200M \
+  --dataset_dir /path/to/data \
   --do_eval --eval_dataset mix_code10_math5_math_reasoning5_textbook20_web60_val_6M --eval_steps 200
 
 EXIT_CODE=$?

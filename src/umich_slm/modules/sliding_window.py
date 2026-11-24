@@ -14,7 +14,7 @@ References:
     - OLMo-3: https://arxiv.org/abs/2512.13961
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -174,28 +174,73 @@ def update_sliding_window_mask_for_cache(
     return mask.unsqueeze(0).unsqueeze(0) if mask.dim() == 2 else mask
 
 
-def is_global_attention_layer(layer_idx: int, global_attention_every_n_layers: int) -> bool:
+# Attention kinds in a `hybrid_attention_ratio` schedule that denote the periodic
+# FULL-context refresh layer. Everything else is banded. This set is kept in sync
+# with the FLOP model in `titan/throughput.py:143`, which already bills exactly
+# ("mla", "attn", "delta") at full causal cost -- so a kind billed as global but
+# executed as windowed is both an architecture bug and an MFU misreport.
+# "attn" is the plain-GQA refresh layer of the [delta, delta, delta, attn]
+# qwen3.5-style schedules; "delta" is excluded because a recurrent layer has no
+# window to lift in the first place.
+GLOBAL_ATTENTION_KINDS = frozenset({"mla", "attn", "global", "full"})
+
+
+def is_global_attention_layer(
+    layer_idx: int,
+    global_attention_every_n_layers: int,
+    hybrid_ratio: Optional[Sequence[str]] = None,
+) -> bool:
     """Determine if a layer should use global (full) attention.
 
     In the global refresh pattern, every N-th layer uses full attention
     to allow information to propagate beyond the local window.
 
+    When ``hybrid_ratio`` (the expanded per-layer attention schedule) is given, the
+    global layer is the one the SCHEDULE designates -- the ``mla`` entry of a
+    ``[swa, swa, swa, mla]`` pattern -- rather than an index derived independently.
+
+    This matters because the two disagreed silently. The 3:1 pattern puts MLA at
+    0-indexed 3/7/11 while the modulo rule below marks 0/4/8, so **no MLA layer
+    was ever global** and the architecture had no full-context layer at all,
+    contradicting `candidate_architectures.tex` §2. Re-phasing the modulo would
+    not fix it in general either: `_ratio_final_global` forces the LAST layer to
+    the global kind, which for e.g. L=10 lands at index 9 and no `% 4` rule
+    catches it. Reading the schedule is the only rule that cannot drift from it.
+
     Args:
         layer_idx: Index of the current layer (0-based).
         global_attention_every_n_layers: Frequency of global attention layers.
-            If 0 or negative, all layers use sliding window.
+            If 0 or negative, all layers use sliding window. Ignored when
+            ``hybrid_ratio`` is supplied.
+        hybrid_ratio: Optional per-layer attention schedule.
 
     Returns:
         True if this layer should use global attention.
 
     Examples:
-        >>> is_global_attention_layer(0, 4)  # Layer 0
-        True  # Often first layer is global
-        >>> is_global_attention_layer(3, 4)  # Layer 3
+        >>> is_global_attention_layer(3, 4, ["swa", "swa", "swa", "mla"])
+        True
+        >>> is_global_attention_layer(0, 4, ["swa", "swa", "swa", "mla"])
         False
-        >>> is_global_attention_layer(4, 4)  # Layer 4
+        >>> is_global_attention_layer(0, 4)  # no schedule: legacy modulo rule
+        True
+        >>> is_global_attention_layer(7, 4, ["swa", "swa", "swa", "mla"])  # cycles
         True
     """
+    if hybrid_ratio:
+        # A ratio SHORTER than num_hidden_layers is a repeating pattern, and both
+        # other consumers already read it that way: `_ratio_entry_for_layer`
+        # (transformer_block.py) picks the layer's attention CLASS with
+        # `pattern[idx % len(pattern)]`, and `per_layer_avg_keys`
+        # (titan/throughput.py) BILLS it with the same modulo. Truncating here
+        # instead of cycling would rebuild the exact bug this function exists to
+        # kill, just past the end of the pattern: the layer gets an MLA module
+        # and is billed at full causal cost, but executes windowed. That is live
+        # for the deep stacking presets, which carry a bare 4-cycle at L=48..80
+        # (stack_100m_b: 19 of 20 MLA layers). The sweep arms are unaffected only
+        # because `_ratio_final_global` pre-expands their pattern to full depth.
+        return str(hybrid_ratio[layer_idx % len(hybrid_ratio)]).lower() in GLOBAL_ATTENTION_KINDS
+
     if global_attention_every_n_layers <= 0:
         return False
 

@@ -48,9 +48,7 @@ class TestAutoClassRegistration:
         with tempfile.TemporaryDirectory() as tmpdir:
             model.save_pretrained(tmpdir)
 
-            loaded = AutoModelForCausalLM.from_pretrained(
-                tmpdir, trust_remote_code=True
-            )
+            loaded = AutoModelForCausalLM.from_pretrained(tmpdir, trust_remote_code=True)
             assert isinstance(loaded, UMichSLMForCausalLM)
 
 
@@ -68,9 +66,8 @@ class TestSaveLoadRoundtrip:
             tiny_model.save_pretrained(tmpdir)
 
             from transformers import AutoModelForCausalLM
-            loaded = AutoModelForCausalLM.from_pretrained(
-                tmpdir, trust_remote_code=True
-            )
+
+            loaded = AutoModelForCausalLM.from_pretrained(tmpdir, trust_remote_code=True)
             loaded.eval()
 
             with torch.no_grad():
@@ -173,15 +170,13 @@ class TestAttentionImplementations:
 
     @pytest.mark.skipif(
         not umich_slm.modules.attention.FLASH_ATTENTION_AVAILABLE,
-        reason="Flash Attention not available"
+        reason="Flash Attention not available",
     )
     def test_flash_attention(self, tiny_config):
         """Flash Attention 2 should work when available."""
         tiny_config._attn_implementation = "flash_attention_2"
         model = UMichSLMForCausalLM(tiny_config).cuda().to(torch.bfloat16)
 
-        input_ids = torch.randint(
-            0, tiny_config.vocab_size, (1, 10), device="cuda"
-        )
+        input_ids = torch.randint(0, tiny_config.vocab_size, (1, 10), device="cuda")
         outputs = model(input_ids)
         assert outputs.logits is not None

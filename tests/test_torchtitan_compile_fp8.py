@@ -77,9 +77,7 @@ def test_apply_compile_skips_deltanet_layers_when_safe():
     compiled = wrapper.apply_compile(deltanet_compile_safe=True)
     # With every_n=2 and first_n=0: layers 0,1 are DeltaNet, layer 2 is attn,
     # layer 3 is DeltaNet ⇒ only layer 2 gets compiled.
-    deltanet_indices = [
-        i for i in range(cfg.num_hidden_layers) if wrapper._layer_uses_deltanet(i)
-    ]
+    deltanet_indices = [i for i in range(cfg.num_hidden_layers) if wrapper._layer_uses_deltanet(i)]
     expected_compiled = cfg.num_hidden_layers - len(deltanet_indices)
     assert compiled == expected_compiled
 
@@ -119,13 +117,123 @@ def test_apply_compile_compiles_all_when_safety_off():
     assert compiled == cfg.num_hidden_layers
 
 
+def _stub_wrapper_with_lse_layers(cfg, lse_flags):
+    """Build a wrapper whose fake decoder layers report _wants_window_lse per
+    ``lse_flags``. Used to exercise apply_compile's window-LSE branching without
+    instantiating scribe modules (which need CUDA/flash)."""
+
+    class _Stub:
+        def __init__(self, cfg):
+            self.config = cfg
+
+        def named_modules(self):
+            return []
+
+    class _Attn(torch.nn.Module):
+        def __init__(self, wants_lse):
+            super().__init__()
+            self._wants_window_lse = wants_lse
+
+    class _Layer(torch.nn.Module):
+        def __init__(self, wants_lse):
+            super().__init__()
+            self.self_attn = _Attn(wants_lse)
+            self.forward = lambda x: x  # type: ignore[assignment]
+
+    wrapper = UMichSLMTitanWrapper.__new__(UMichSLMTitanWrapper)
+    torch.nn.Module.__init__(wrapper)
+    wrapper.inner = _Stub(cfg)  # type: ignore[assignment]
+    fake_layers = [_Layer(f) for f in lse_flags]
+    wrapper._iter_decoder_layers = lambda: fake_layers  # type: ignore[assignment]
+    return wrapper
+
+
+def test_apply_compile_skips_window_lse_layers_on_mod_gather_arm():
+    """scribe/cmod (use_mod gather runner) hit an Inductor codegen fault on the
+    compiled window-LSE block; those layers must be left eager. The MLA global
+    layers (no _wants_window_lse) stay compiled."""
+    cfg = UMichSLMConfig(
+        vocab_size=1000,
+        hidden_size=64,
+        intermediate_size=172,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=512,
+        use_mod=True,
+    )
+    # 3 scribe layers + 1 MLA global (mirrors the every-4th global pattern).
+    wrapper = _stub_wrapper_with_lse_layers(cfg, [True, True, True, False])
+    compiled = wrapper.apply_compile(window_lse_compile_safe=True)
+    assert compiled == 1  # only the non-LSE (MLA global) layer
+
+
+def test_apply_compile_compiles_window_lse_layers_on_pathways_arm():
+    """mopd/mopd_delta drive scribe layers through the pathways backbone, not the
+    MoD gather runner, and compile cleanly -- the guard must NOT skip them."""
+    cfg = UMichSLMConfig(
+        vocab_size=1000,
+        hidden_size=64,
+        intermediate_size=172,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=512,
+        use_pathways=True,
+    )
+    wrapper = _stub_wrapper_with_lse_layers(cfg, [True, True, True, False])
+    compiled = wrapper.apply_compile(window_lse_compile_safe=True)
+    assert compiled == cfg.num_hidden_layers  # gather_arm=False => no skipping
+
+
+def test_apply_compile_default_compiles_all_gather_arm_layers():
+    """Default: window_lse_compile_safe is OFF (safe_pointwise_autotune is the real
+    fix), so even the use_mod gather arm compiles every layer -- full speed."""
+    cfg = UMichSLMConfig(
+        vocab_size=1000,
+        hidden_size=64,
+        intermediate_size=172,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=512,
+        use_mod=True,
+    )
+    wrapper = _stub_wrapper_with_lse_layers(cfg, [True, True, True, False])
+    compiled = wrapper.apply_compile()  # defaults
+    assert compiled == cfg.num_hidden_layers  # no eager fallback by default
+
+
+def test_apply_compile_disables_inductor_pointwise_autotune_by_default():
+    """The A6000 root-cause fix: apply_compile must turn off Inductor's pointwise
+    autotuner (which benchmarks an over-reading config for the MLA V-slice)."""
+    import torch._inductor.config as inductor_config
+
+    inductor_config.triton.autotune_pointwise = True  # start enabled
+    cfg = UMichSLMConfig(
+        vocab_size=1000,
+        hidden_size=64,
+        intermediate_size=172,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=512,
+    )
+    wrapper = _stub_wrapper_with_lse_layers(cfg, [False, False])
+    wrapper.apply_compile()
+    assert inductor_config.triton.autotune_pointwise is False
+    # ...and stays on when explicitly opted out.
+    inductor_config.triton.autotune_pointwise = True
+    wrapper2 = _stub_wrapper_with_lse_layers(cfg, [False, False])
+    wrapper2.apply_compile(safe_pointwise_autotune=False)
+    assert inductor_config.triton.autotune_pointwise is True
+
+
 # ----------------------------------------------------------------- float8
 def test_apply_float8_raises_clear_import_error_without_torchao(tiny_config):
     """The most common failure mode: H100 TOML enabled, torchao not installed.
     The error must include the package + version hint so the fix is obvious."""
-    pytest.importorskip(
-        "torch", reason="torch required for the wrapper to instantiate"
-    )
+    pytest.importorskip("torch", reason="torch required for the wrapper to instantiate")
     try:
         import torchao.float8  # noqa: F401
     except ImportError:

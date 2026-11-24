@@ -62,9 +62,7 @@ class TestSetSeed:
         model2 = UMichSLMForCausalLM(tiny_config)
 
         # Compare all parameters
-        for (n1, p1), (n2, p2) in zip(
-            model1.named_parameters(), model2.named_parameters()
-        ):
+        for (n1, p1), (n2, p2) in zip(model1.named_parameters(), model2.named_parameters()):
             assert n1 == n2
             torch.testing.assert_close(p1, p2, msg=f"Parameter {n1} differs")
 
@@ -94,9 +92,7 @@ class TestSetSeed:
 
         # At least some parameters should differ
         any_different = False
-        for (n1, p1), (n2, p2) in zip(
-            model1.named_parameters(), model2.named_parameters()
-        ):
+        for (n1, p1), (n2, p2) in zip(model1.named_parameters(), model2.named_parameters()):
             if not torch.allclose(p1, p2):
                 any_different = True
                 break

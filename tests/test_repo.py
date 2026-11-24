@@ -230,8 +230,10 @@ class TestRePoIntegration:
         # Layers 0-1 should NOT have repo_predictor
         for i in range(repo_config.repo_start_layer):
             layer = repo_model.model.layers[i]
-            assert not hasattr(layer.self_attn, "repo_predictor") or \
-                   layer.self_attn.repo_predictor is None
+            assert (
+                not hasattr(layer.self_attn, "repo_predictor")
+                or layer.self_attn.repo_predictor is None
+            )
 
         # Layers 2+ should have repo_predictor
         for i in range(repo_config.repo_start_layer, repo_config.num_hidden_layers):
@@ -342,8 +344,10 @@ class TestRePoDisabled:
         model = UMichSLMForCausalLM(standard_config)
 
         for layer in model.model.layers:
-            assert not hasattr(layer.self_attn, "repo_predictor") or \
-                   layer.self_attn.repo_predictor is None
+            assert (
+                not hasattr(layer.self_attn, "repo_predictor")
+                or layer.self_attn.repo_predictor is None
+            )
 
     def test_forward_without_repo(self, standard_config):
         """Standard forward should work without RePo."""
@@ -404,8 +408,7 @@ class TestRePoWithMLA:
         # Layers 0-1 should NOT have repo_predictor active
         for i in range(repo_mla_config.repo_start_layer):
             layer = repo_mla_model.model.layers[i]
-            assert not layer.self_attn._repo_active or \
-                   layer.self_attn.repo_predictor is None
+            assert not layer.self_attn._repo_active or layer.self_attn.repo_predictor is None
 
         # Layers 2+ should have repo_predictor
         for i in range(repo_mla_config.repo_start_layer, repo_mla_config.num_hidden_layers):

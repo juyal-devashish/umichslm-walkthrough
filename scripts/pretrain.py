@@ -94,6 +94,14 @@ def create_model_config(args: argparse.Namespace) -> dict:
         config["mtp_num_heads"] = args.mtp_num_tokens
         config["mtp_loss_weight"] = args.mtp_loss_weight
 
+    # Token-Superposition Training (TST). Flags are saved on the init config so
+    # downstream trainers (LLaMA Factory, HF Trainer) can attach TSTTrainerCallback.
+    config["tst_enabled"] = bool(getattr(args, "tst_enabled", False))
+    if config["tst_enabled"]:
+        config["tst_bag_size"] = int(args.tst_bag_size)
+        config["tst_recovery_ratio"] = float(args.tst_recovery_ratio)
+        config["tst_loss_weighting"] = args.tst_loss_weighting
+
     # Mixture of Experts
     config["use_moe"] = args.use_moe
     if args.use_moe:
@@ -170,8 +178,9 @@ def save_model_init(config_dict: dict, output_path: Path, tokenizer_path: Option
         print(f"Loading tokenizer from {tokenizer_path}")
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
     else:
-        # Use LLaMA 3 tokenizer as base
-        default_tokenizer_path = "meta-llama/Meta-Llama-3-8B"
+        # Default to the project SuperBPE-56000 tokenizer (umich_slm.tokenizer_defaults).
+        from umich_slm.tokenizer_defaults import get_tokenizer_path
+        default_tokenizer_path = get_tokenizer_path()
         print(f"Loading tokenizer from {default_tokenizer_path}...")
         try:
             tokenizer = AutoTokenizer.from_pretrained(
@@ -444,6 +453,33 @@ def main():
         type=float,
         default=0.3,
         help="Weight for MTP loss",
+    )
+
+    # Token-Superposition Training (Peng et al., arXiv:2605.06546)
+    tst_group = parser.add_argument_group("Token-Superposition Training")
+    tst_group.add_argument(
+        "--tst_enabled",
+        action="store_true",
+        help="Enable TST phase (i) + recovery. Paper: arXiv:2605.06546.",
+    )
+    tst_group.add_argument(
+        "--tst_bag_size",
+        type=int,
+        default=6,
+        help="TST bag size s (paper: 4-8 dense ≤3B, 16 for 10B-A1B MoE).",
+    )
+    tst_group.add_argument(
+        "--tst_recovery_ratio",
+        type=float,
+        default=0.3,
+        help="Fraction of total steps in TST phase (i) before recovery.",
+    )
+    tst_group.add_argument(
+        "--tst_loss_weighting",
+        type=str,
+        default="uniform",
+        choices=["uniform", "power_law"],
+        help="Within-bag weighting for MCE (power_law per Appendix D for s>=8).",
     )
 
     # Mixture of Experts

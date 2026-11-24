@@ -177,7 +177,7 @@ To choose a conda environment by absolute path instead, use:
 
 ```yaml
 slurm:
-  conda_env_path: /scratch/.../envs/umich-slm
+  conda_env_path: /path/to/data
 ```
 
 Use only one of `conda_env_name` or `conda_env_path`.
@@ -247,7 +247,7 @@ where `%u` is expanded by SLURM to the submitting user.
 The default configs write model outputs to shared scratch:
 
 ```bash
-/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/results/
+/path/to/data
 ```
 
 Pretraining outputs go under:
@@ -278,3 +278,28 @@ Use this loop for new experiments:
 
 Do not manually edit files under `generated-slurm/` unless you are debugging a
 single local run. Put reusable changes back into the YAML config or generator.
+
+## Delphi-style scaling sweeps
+
+For the cross-architecture screening + held-out workflow, use the
+dedicated generator in `scripts/scaling_laws.py`:
+
+```bash
+# Pass 1 — screen all archs at 4 sizes × 4 budgets (single seed)
+python scripts/scaling_laws.py delphi_sweep \
+    --output_dir generated-slurm/delphi_screen \
+    --slurm_config configs/slurm/delphi_sweep_greatlakes.yaml \
+    --pass screen
+
+# Pass 2 — held-out budget for the selected subset (3 seeds)
+python scripts/scaling_laws.py delphi_sweep \
+    --output_dir generated-slurm/delphi_holdout \
+    --slurm_config configs/slurm/delphi_sweep_greatlakes.yaml \
+    --pass holdout --archs delphi,qwen3_like --seeds 0,1,2
+```
+
+The generator writes one `.sh` per run + a `.recipe.json` sidecar with the
+per-run (lr, β₂, ε, schedule, staging plan) carried by the Delphi recipe,
+plus a unified `sweep_manifest.json` consumed by `scripts/scaling_fit.py`.
+See `docs/scaling_experiments.md` for the full methodology and
+`docs/scaling_recipe.md` for the formula reference.

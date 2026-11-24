@@ -62,31 +62,23 @@ class TestUMichSLMConfig:
 
     def test_rope_scaling_validation_valid(self):
         """Valid rope_scaling should not raise."""
-        config = UMichSLMConfig(
-            rope_scaling={"type": "linear", "factor": 2.0}
-        )
+        config = UMichSLMConfig(rope_scaling={"type": "linear", "factor": 2.0})
         assert config.rope_scaling["factor"] == 2.0
 
     def test_rope_scaling_validation_invalid_type(self):
         """Invalid rope_scaling type should raise."""
         with pytest.raises(ValueError, match="type must be one of"):
-            UMichSLMConfig(
-                rope_scaling={"type": "invalid", "factor": 2.0}
-            )
+            UMichSLMConfig(rope_scaling={"type": "invalid", "factor": 2.0})
 
     def test_rope_scaling_validation_missing_keys(self):
         """Missing rope_scaling keys should raise."""
         with pytest.raises(ValueError, match="must contain keys"):
-            UMichSLMConfig(
-                rope_scaling={"type": "linear"}
-            )
+            UMichSLMConfig(rope_scaling={"type": "linear"})
 
     def test_rope_scaling_validation_invalid_factor(self):
         """Factor <= 1.0 should raise."""
         with pytest.raises(ValueError, match="factor must be > 1.0"):
-            UMichSLMConfig(
-                rope_scaling={"type": "linear", "factor": 0.5}
-            )
+            UMichSLMConfig(rope_scaling={"type": "linear", "factor": 0.5})
 
     def test_save_and_load(self):
         """Config should be saveable and loadable."""
@@ -269,13 +261,27 @@ class TestPresets:
             assert estimate_parameters(size) > estimate_backbone_parameters(size)
 
     def test_umichslm_configs_dict(self):
-        """UMICHSLM_CONFIGS should contain required keys."""
+        """UMICHSLM_CONFIGS should contain required keys.
+
+        Layer-wise-scaling presets (e.g. openelm_like_*) derive
+        ``intermediate_size`` and ``num_attention_heads`` per layer from
+        ``ffn_multiplier_range`` / ``head_scaling_range`` and intentionally
+        omit the static fields.
+        """
         for size, config in UMICHSLM_CONFIGS.items():
-            assert "hidden_size" in config
-            assert "intermediate_size" in config
-            assert "num_hidden_layers" in config
-            assert "num_attention_heads" in config
-            assert "num_key_value_heads" in config
+            assert "hidden_size" in config, f"{size} missing hidden_size"
+            assert "num_hidden_layers" in config, f"{size} missing num_hidden_layers"
+            assert "num_key_value_heads" in config, f"{size} missing num_key_value_heads"
+            if config.get("layer_wise_scaling"):
+                assert (
+                    "ffn_multiplier_range" in config
+                ), f"{size} uses layer_wise_scaling but missing ffn_multiplier_range"
+                assert (
+                    "head_scaling_range" in config
+                ), f"{size} uses layer_wise_scaling but missing head_scaling_range"
+            else:
+                assert "intermediate_size" in config, f"{size} missing intermediate_size"
+                assert "num_attention_heads" in config, f"{size} missing num_attention_heads"
 
 
 class TestConfigValidation:

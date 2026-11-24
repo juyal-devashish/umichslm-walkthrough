@@ -105,7 +105,7 @@ def prepare_dataset(
     output_dir: Path,
     seq_length: int = 2048,
     seed: int = 42,
-    tokenizer_name: str = "meta-llama/Meta-Llama-3-8B",
+    tokenizer_name: str = "umich_slm_default",
     verify_tokens: bool = True,
     dry_run: bool = False,
 ) -> dict:
@@ -149,7 +149,11 @@ def prepare_dataset(
         print("\n[DRY RUN] Would prepare dataset with above configuration.")
         return {"dry_run": True}
 
-    # Load tokenizer for verification
+    # Load tokenizer for verification. The sentinel resolves to the project
+    # SuperBPE-56000 tokenizer (umich_slm.tokenizer_defaults).
+    if tokenizer_name == "umich_slm_default":
+        from umich_slm.tokenizer_defaults import get_tokenizer_path
+        tokenizer_name = get_tokenizer_path()
     print(f"\nLoading tokenizer: {tokenizer_name}")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
 
@@ -350,8 +354,8 @@ def main():
     parser.add_argument(
         "--tokenizer",
         type=str,
-        default="meta-llama/Meta-Llama-3-8B",
-        help="Tokenizer to use for token counting (default: LLaMA 3)",
+        default="umich_slm_default",
+        help="Tokenizer for token counting (default: project SuperBPE-56000).",
     )
     parser.add_argument(
         "--no_verify",

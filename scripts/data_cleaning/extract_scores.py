@@ -9,13 +9,13 @@ The output is intentionally small: ~32 bytes per row, so even 100M rows fit in ~
 
 Usage:
     python scripts/data_cleaning/extract_scores.py \\
-        --data_dir /scratch/.../fineweb-edu-dedup \\
-        --output   /scratch/.../score_map.parquet
+        --data_dir /path/to/data \\
+        --output   /path/to/data
 
     # Limit workers (default: min(cpu_count, 8))
     python scripts/data_cleaning/extract_scores.py \\
-        --data_dir /scratch/.../fineweb-edu-dedup \\
-        --output   /scratch/.../score_map.parquet \\
+        --data_dir /path/to/data \\
+        --output   /path/to/data \\
         --workers 4
 """
 from __future__ import annotations

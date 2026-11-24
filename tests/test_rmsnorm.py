@@ -32,7 +32,7 @@ class TestRMSNorm:
         out = norm(x)
 
         # Compute RMS of output
-        rms = torch.sqrt(torch.mean(out ** 2, dim=-1))
+        rms = torch.sqrt(torch.mean(out**2, dim=-1))
         # Should be close to 1
         assert torch.allclose(rms, torch.ones_like(rms), atol=1e-4)
 
@@ -142,7 +142,7 @@ class TestZeroCenteredRMSNorm:
         out = norm(x)
 
         # Compute RMS of output (which is already zero-centered)
-        rms = torch.sqrt(torch.mean(out ** 2, dim=-1))
+        rms = torch.sqrt(torch.mean(out**2, dim=-1))
         # Should be close to 1
         assert torch.allclose(rms, torch.ones_like(rms), atol=1e-4)
 

@@ -5,19 +5,159 @@ attention, MLP, and normalization components in a pre-norm architecture.
 Includes support for Mixture of Experts (MoE) layers.
 """
 
+import math
 from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
-from .attention import UMichSLMAttention, ATTENTION_CLASSES
-from .mla import MLA_ATTENTION_CLASSES, UMichSLMMLAAttention
+from .attention import ATTENTION_CLASSES, UMichSLMAttention
 from .deltanet import DELTANET_CLASSES, GatedDeltaNet
 from .griffin import GRIFFIN_CLASSES, RGLRUAttention
+from .mla import MLA_ATTENTION_CLASSES, UMichSLMMLAAttention
+from .moe import MoELayer, MoEOutput, SparseMoE
 from .rmsnorm import get_rmsnorm_class
-from .swiglu import SwiGLUMLP
-from .moe import MoELayer, SparseMoE, MoEOutput
-from .mixture_of_depths import MoDRouter, MoDGate, MoDOutput, is_mod_layer
+from .swiglu import MatFormerSwiGLUMLP, RoutedMatFormerSwiGLUMLP, SwiGLUMLP
+
+
+def _build_mlp(config, layer_idx=None):
+    """Build the per-block FFN: SwiGLU, or MatFormer nested-FFN when use_matformer.
+
+    FIXED-COMPUTE PREFIX/SUFFIX. Per the design docs, the first few and last few
+    layers must run FULL compute for every token -- early layers are still
+    building the representation the router would have to judge, and a token
+    starved there cannot recover. Only the middle "reasoning" layers are
+    dynamic. `mat_ffn` therefore keeps a plain full-width SwiGLU outside
+    [dyn_start, L - dyn_end), matching the mod_num_always_used_start/_end
+    convention MoD already uses.
+    """
+    kinds = getattr(config, "mat_ffn_layer_kinds", None)
+    if (
+        getattr(config, "use_mat_ffn", False)
+        and layer_idx is not None
+        and kinds
+        and _ratio_entry_for_layer(config, layer_idx) not in kinds
+    ):
+        # mat_ffn_layer_kinds: this layer's kind is not routed. Plain SwiGLU at the
+        # backbone width, which is what mat_ffn_fixed_width holds (intermediate_size
+        # is the nest's WIDEST tier).
+        fw = getattr(config, "mat_ffn_fixed_width", None)
+        return SwiGLUMLP(
+            hidden_size=config.hidden_size,
+            intermediate_size=int(fw) if fw else config.intermediate_size,
+            hidden_act=getattr(config, "hidden_act", "silu"),
+            bias=getattr(config, "mlp_bias", False),
+        )
+    if getattr(config, "use_mat_ffn", False) and layer_idx is not None:
+        L = int(config.num_hidden_layers)
+        # CLAMP the fixed prefix/suffix to the model's depth. With the defaults
+        # (8 and 8) a 12-layer model would get the band [8, 4) -- EMPTY -- and
+        # mat_ffn would silently become a plain dense model with no routers at
+        # all, which is exactly the class of bug this codebase keeps hitting.
+        # Deep models are unaffected (at L=80 the band is [8, 72) as intended);
+        # shallow ones keep a proportional prefix/suffix and a non-empty band.
+        cap = max(0, (L - 2) // 3)
+        lo = min(int(getattr(config, "mat_ffn_dyn_start", 0) or 0), cap)
+        hi = L - min(int(getattr(config, "mat_ffn_dyn_end", 0) or 0), cap)
+        if not (lo <= layer_idx < hi):
+            # Fixed-compute prefix/suffix: full width for every token, unless
+            # `mat_ffn_fixed_width` decouples them from intermediate_size.
+            #
+            # WHY THE KNOB EXISTS (2026-08-22). At matched ACTIVE params a
+            # skewed tier prior pushes intermediate_size UP -- that is the whole
+            # point, a bigger nest around the same expected cost -- but these
+            # layers run the full d_ff on every token, so their share of the
+            # active budget grows with the skew: 29% of the deep80 FFN budget at
+            # uniform quarters, ~50% at d_ff=8513. Past that the fixed layers
+            # eat the saving the router is buying. See docs/mat_ffn_nesting.md.
+            fw = getattr(config, "mat_ffn_fixed_width", None)
+            return SwiGLUMLP(
+                hidden_size=config.hidden_size,
+                intermediate_size=int(fw) if fw else config.intermediate_size,
+                hidden_act=getattr(config, "hidden_act", "silu"),
+                bias=getattr(config, "mlp_bias", False),
+            )
+        interval = max(1, int(getattr(config, "mat_ffn_route_interval", 1) or 1))
+        # With mat_ffn_layer_kinds the kind filter above already picked the routed
+        # layers (e.g. every "attn" slot of a 3:1 hybrid is every 4th layer), so the
+        # index interval must not thin them a second time.
+        if not kinds and (layer_idx - lo) % interval != 0:
+            # ROUTE EVERY Nth LAYER. Measured: mat_ffn's per-layer routing
+            # overhead is roughly constant, so total cost scales with the number
+            # of routed layers -- 12 routed layers cost 0.4% over the backbone,
+            # 70 cost 43%. Routing every layer is what made this the most
+            # expensive of the new arms.
+            #
+            # The layers in between are NOT full width and NOT routed: they run
+            # a plain SwiGLU at the BUDGET width for every token. That keeps
+            # essentially all of the FLOP saving (the budget width IS the mean
+            # routed width) on dense kernels with zero gather, zero sort and
+            # zero sync, while the routed layers still supply the per-token
+            # dynamism. Cheaper than full width AND cheaper than routing.
+            widths = getattr(config, "mat_ffn_widths", None) or [
+                config.intermediate_size // 4,
+                config.intermediate_size // 2,
+                config.intermediate_size,
+            ]
+            budget = float(getattr(config, "mat_ffn_budget", 0.0) or 0.0)
+            if budget <= 0:
+                budget = sum(widths) / len(widths)
+            w = max(8, int(round(budget / 8.0)) * 8)  # keep the GEMM shape nice
+            return SwiGLUMLP(
+                hidden_size=config.hidden_size,
+                intermediate_size=min(w, config.intermediate_size),
+                hidden_act=getattr(config, "hidden_act", "silu"),
+                bias=getattr(config, "mlp_bias", False),
+            )
+    if getattr(config, "use_mat_ffn", False):
+        # W1 `mat_ffn`: per-TOKEN nested-width routing. Checked before
+        # use_matformer because it is the routed superset of it.
+        return RoutedMatFormerSwiGLUMLP(
+            hidden_size=config.hidden_size,
+            intermediate_size=config.intermediate_size,
+            hidden_act=getattr(config, "hidden_act", "silu"),
+            bias=getattr(config, "mlp_bias", False),
+            granularities=getattr(config, "mat_ffn_widths", None),
+            budget=getattr(config, "mat_ffn_budget", 0.0),
+            aux_weight=getattr(config, "mat_ffn_aux_weight", 0.01),
+            dispatch=getattr(config, "mat_ffn_dispatch", "sorted"),
+            tier_fracs=getattr(config, "mat_ffn_tier_fracs", None),
+            aux_mode=getattr(config, "mat_ffn_aux_mode", "mean"),
+            explore_frac=float(getattr(config, "mat_ffn_explore_frac", 0.0) or 0.0),
+            gate_mode=str(getattr(config, "mat_ffn_gate_mode", "ste") or "ste"),
+            # NOT `or`-defaulted: 0.0 is falsy and would invert the meaning.
+            mixture_frac=float(getattr(config, "mat_ffn_mixture_frac", 1.0)),
+            route_mode=str(getattr(config, "mat_ffn_route_mode", "argmax") or "argmax"),
+            route_thresh_lr=float(getattr(config, "mat_ffn_route_thresh_lr", 0.01)),
+            # Absent from pre-2026-09-18 configs: those cells trained post_clip,
+            # but the controller only acts in training, so eval is unaffected.
+            route_ctrl=str(getattr(config, "mat_ffn_route_ctrl", "wish") or "wish"),
+            cap_headroom=float(getattr(config, "mat_ffn_cap_headroom", 1.0) or 1.0),
+            explore_from=str(getattr(config, "mat_ffn_explore_from", "target") or "target"),
+            tier_scale_init=getattr(config, "mat_ffn_tier_scale_init", None),
+            prior_bias_init=bool(getattr(config, "mat_ffn_prior_bias_init", False)),
+            track_occupancy=bool(getattr(config, "mat_ffn_track_occupancy", True)),
+            warmup_stages=int(getattr(config, "mat_ffn_warmup_stages", 4) or 4),
+            warmup_top_weight=float(getattr(config, "mat_ffn_warmup_top_weight", 1.0) or 1.0),
+        )
+    if getattr(config, "use_matformer", False):
+        return MatFormerSwiGLUMLP(
+            hidden_size=config.hidden_size,
+            intermediate_size=config.intermediate_size,
+            hidden_act=getattr(config, "hidden_act", "silu"),
+            bias=getattr(config, "mlp_bias", False),
+            active_size=getattr(config, "matformer_active_size", None),
+            granularities=getattr(config, "matformer_granularities", None),
+        )
+    return SwiGLUMLP(
+        hidden_size=config.hidden_size,
+        intermediate_size=config.intermediate_size,
+        hidden_act=getattr(config, "hidden_act", "silu"),
+        bias=getattr(config, "mlp_bias", False),
+    )
+
+
+from .mixture_of_depths import MoDGate, MoDOutput, MoDRouter, is_mod_layer
 
 
 def _should_use_deltanet(config, layer_idx: int) -> bool:
@@ -88,6 +228,10 @@ def _ratio_entry_for_layer(config, layer_idx):
 
 
 def _resolve_mla_class(attn_implementation):
+    if attn_implementation == "flash_attention_2":
+        # FlashAttention avoids the [B,H,S,S] score matrix the eager/SDPA MLA
+        # paths materialise for the global layers (fatal at long context).
+        return MLA_ATTENTION_CLASSES.get("flash_attention_2", UMichSLMMLAAttention)
     if attn_implementation == "sdpa":
         return MLA_ATTENTION_CLASSES.get("sdpa", UMichSLMMLAAttention)
     return MLA_ATTENTION_CLASSES.get("eager", UMichSLMMLAAttention)
@@ -95,11 +239,47 @@ def _resolve_mla_class(attn_implementation):
 
 def _resolve_deltanet_class(config):
     variant = getattr(config, "deltanet_variant", "gated")
+    if variant == "rwkv7":
+        # Lazy: rwkv7.py imports DeltaNetCache from deltanet.py.
+        from .rwkv7 import RWKV7Mixer
+
+        return RWKV7Mixer
     return DELTANET_CLASSES.get(variant, GatedDeltaNet)
 
 
-def _resolve_swa_globals_class(attn_implementation):
-    """Resolve the SWA-with-globals attention class. Lazy import to avoid cycles."""
+def _resolve_swa_globals_class(attn_implementation, config=None):
+    """Resolve the SWA-with-globals attention class. Lazy import to avoid cycles.
+
+    With ``config.swa_use_registers`` the "swa" entries dispatch to the
+    registers twin instead (pure-window self-attention + register-bank read;
+    see ``swa_registers.py``) — the globals never enter the sequence.
+    """
+    # use_logit_sinks belongs here too: the per-head sink logit lives on
+    # ScribeSinkMixin, so an arm with logit sinks but NO sink bank and NO scribe
+    # bank (P2 `sink_diet`) would otherwise fall through to the plain registers
+    # class and the knob would silently do nothing -- verified by a forward
+    # A/B that came back bitwise identical before this line was fixed.
+    if config is not None and (
+        getattr(config, "swa_sink_count", 0) > 0
+        or getattr(config, "use_scribe_bank", False)
+        or getattr(config, "use_logit_sinks", False)
+    ):
+        from .swa_scribe import SWA_SCRIBE_CLASSES, SWAScribeAttention
+
+        return SWA_SCRIBE_CLASSES.get(attn_implementation, SWAScribeAttention)
+    if config is not None and getattr(config, "swa_use_registers", False):
+        reg_count = getattr(config, "swa_register_count", None)
+        total = int(getattr(config, "swa_global_count", 0))
+        if reg_count is not None and 0 < int(reg_count) < total:
+            # Hybrid split: a (smaller) prepended prefix remains, so the layer
+            # must keep the full prefix machinery (flex path, num_protected_prefix)
+            # AND add the register read.
+            from .swa_registers import SWA_HYBRID_CLASSES, SWAHybridAttention
+
+            return SWA_HYBRID_CLASSES.get(attn_implementation, SWAHybridAttention)
+        from .swa_registers import SWA_REGISTERS_CLASSES, SWARegistersAttention
+
+        return SWA_REGISTERS_CLASSES.get(attn_implementation, SWARegistersAttention)
     from .swa_with_globals import SWA_GLOBALS_CLASSES, SWAWithGlobalsAttention
 
     return SWA_GLOBALS_CLASSES.get(attn_implementation, SWAWithGlobalsAttention)
@@ -152,8 +332,12 @@ def _get_attention_class(config, layer_idx: int = None, _skip_hymba: bool = Fals
         if entry == "mla":
             return _resolve_mla_class(attn_implementation)
         if entry == "swa":
-            return _resolve_swa_globals_class(attn_implementation)
+            return _resolve_swa_globals_class(attn_implementation, config)
         if entry == "attn":
+            if int(getattr(config, "attn_register_count", 0) or 0) > 0:
+                from .swa_registers import FULL_REGISTERS_CLASSES, FullRegistersAttention
+
+                return FULL_REGISTERS_CLASSES.get(attn_implementation, FullRegistersAttention)
             return ATTENTION_CLASSES.get(attn_implementation, UMichSLMAttention)
         # Fall through if entry is unrecognized — config validation should have caught it.
 
@@ -206,13 +390,8 @@ class UMichSLMDecoderLayer(nn.Module):
         # Self-attention
         self.self_attn = attention_class(config=config, layer_idx=layer_idx)
 
-        # MLP (SwiGLU)
-        self.mlp = SwiGLUMLP(
-            hidden_size=config.hidden_size,
-            intermediate_size=config.intermediate_size,
-            hidden_act=getattr(config, "hidden_act", "silu"),
-            bias=getattr(config, "mlp_bias", False),
-        )
+        # MLP (SwiGLU, optionally MatFormer nested-FFN)
+        self.mlp = _build_mlp(config, layer_idx)
 
         # Layer norms
         norm_class = get_rmsnorm_class(
@@ -237,6 +416,67 @@ class UMichSLMDecoderLayer(nn.Module):
             self.moda_ffn_proj = MoDAFFNProjection(config.hidden_size, num_kv_heads, head_dim)
         else:
             self.moda_ffn_proj = None
+
+        # State/prediction separation (modules/pause_stream.py). `pause_enabled`
+        # is a PLAIN BOOL read in forward, not a config lookup, so the model can
+        # phase separation on mid-run: the paper's cheap variants all start from
+        # a standard checkpoint and switch over partway through the schedule.
+        # Under torch.compile the switch costs one recompile, once per run.
+        # Depth parameterization (configuration_umichslm.py, 2026-10-31): a residual
+        # branch multiplier base/L (CompleteP, alpha = 1) and LayerNorm scaling
+        # 1/sqrt(layer_idx + 1). Both are exactly 1.0 when off, and _branch/_ln_out
+        # then return their input untouched, so default cells are bitwise unchanged.
+        base = int(getattr(config, "depth_scale_base_layers", 0) or 0)
+        self.residual_scale = base / config.num_hidden_layers if base > 0 else 1.0
+        self.ln_scale = (
+            1.0 / math.sqrt(layer_idx + 1) if getattr(config, "layernorm_scaling", False) else 1.0
+        )
+        if (self.residual_scale != 1.0 or self.ln_scale != 1.0) and self.norm_placement != "pre":
+            raise NotImplementedError("depth_scale_base_layers / layernorm_scaling need pre-norm")
+        self.pause_two_stream = bool(getattr(config, "use_pause_stream", False))
+        self.pause_enabled = self.pause_two_stream
+        self.pause_ffn = None
+        if self.pause_two_stream:
+            if self.norm_placement != "pre":
+                raise NotImplementedError(
+                    "use_pause_stream requires norm_placement='pre'; the post-norm "
+                    "branch normalizes the residual after the add, which would mix "
+                    "the two streams' statistics."
+                )
+            # The pause query reaches the mixer one of two ways: `precomputed_q`
+            # (GQA and the registers/scribe SWA family: q_proj forked before
+            # q_norm/RoPE) or `pause_query_states` (MLA and Gated DeltaNet: the
+            # module derives Q from these rows itself, since MLA's Q is a
+            # down/up/rope split and DeltaNet's runs through the short conv). A
+            # module that accepts neither would silently attend with the STATE
+            # stream's queries and the whole arm would be a no-op -- exactly the
+            # class of silent-knob failure that has already invalidated two
+            # ablations in this project. Fail at construction.
+            import inspect
+
+            params = inspect.signature(self.self_attn.forward).parameters
+            if "pause_query_states" in params:
+                self.pause_query_mode = "states"
+            elif hasattr(self.self_attn, "q_proj") and "precomputed_q" in params:
+                self.pause_query_mode = "q"
+            else:
+                raise NotImplementedError(
+                    f"use_pause_stream needs {type(self.self_attn).__name__}.forward "
+                    f"to accept precomputed_q (with a q_proj) or pause_query_states "
+                    f"(layer {layer_idx}); without either the prediction stream would "
+                    f"attend with the state stream's queries and the arm would "
+                    f"measure nothing."
+                )
+            if getattr(config, "pause_shared_ffn", True):
+                from .pause_stream import PauseSharedFFN
+
+                self.pause_ffn = PauseSharedFFN(config.hidden_size)
+
+    def _branch(self, x: torch.Tensor) -> torch.Tensor:
+        return x if self.residual_scale == 1.0 else x * self.residual_scale
+
+    def _ln_out(self, x: torch.Tensor) -> torch.Tensor:
+        return x if self.ln_scale == 1.0 else x * self.ln_scale
 
     def forward(
         self,
@@ -267,9 +507,45 @@ class UMichSLMDecoderLayer(nn.Module):
         """
         residual = hidden_states
 
-        if self.norm_placement == "pre":
+        if self.pause_two_stream and self.pause_enabled:
+            # Two streams, concatenated along the batch dim with the STATE half
+            # first (see modules/pause_stream.py). The only thing that differs
+            # from an ordinary layer: K/V come from the state half for BOTH
+            # halves, while Q comes from each half's own residual stream, so the
+            # prediction stream reads the state stream's context and writes no
+            # K/V of its own. One FA2 call at batch 2B, ordinary causal mask.
+            normed = self._ln_out(self.input_layernorm(hidden_states))
+            half = normed.shape[0] // 2
+            state_normed = normed[:half]
+            # Q source: each stream's own state. The precomputed_q fork is before
+            # q_norm/RoPE, so the pause query still carries its own position's
+            # rotation; pause_query_states hands the module the rows instead.
+            if self.pause_query_mode == "q":
+                q_kw = dict(precomputed_q=self.self_attn.q_proj(normed))
+            else:
+                q_kw = dict(pause_query_states=normed)
+            attn_out, self_attn_weights, present_key_value = self.self_attn(
+                # K/V source: the state half, repeated so both halves see it.
+                hidden_states=torch.cat([state_normed, state_normed], dim=0),
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                depth_kv_cache=depth_kv_cache,
+                **q_kw,
+            )
+            hidden_states = residual + self._branch(attn_out)
+
+            residual = hidden_states
+            normed_for_mlp = self._ln_out(self.post_attention_layernorm(hidden_states))
+            if self.pause_ffn is not None:
+                hidden_states = residual + self._branch(self.pause_ffn(self.mlp, normed_for_mlp))
+            else:
+                hidden_states = residual + self._branch(self.mlp(normed_for_mlp))
+        elif self.norm_placement == "pre":
             # Pre-norm + Self-attention
-            hidden_states = self.input_layernorm(hidden_states)
+            hidden_states = self._ln_out(self.input_layernorm(hidden_states))
             hidden_states, self_attn_weights, present_key_value = self.self_attn(
                 hidden_states=hidden_states,
                 attention_mask=attention_mask,
@@ -279,11 +555,11 @@ class UMichSLMDecoderLayer(nn.Module):
                 use_cache=use_cache,
                 depth_kv_cache=depth_kv_cache,
             )
-            hidden_states = residual + hidden_states
+            hidden_states = residual + self._branch(hidden_states)
 
             # Pre-norm + MLP
             residual = hidden_states
-            normed_for_mlp = self.post_attention_layernorm(hidden_states)
+            normed_for_mlp = self._ln_out(self.post_attention_layernorm(hidden_states))
 
             # MoDA: project FFN input to depth KV
             if depth_kv_cache is not None and self.moda_ffn_proj is not None:
@@ -291,7 +567,7 @@ class UMichSLMDecoderLayer(nn.Module):
                 depth_kv_cache.append(self.layer_idx, k_ffn, v_ffn)
 
             hidden_states = self.mlp(normed_for_mlp)
-            hidden_states = residual + hidden_states
+            hidden_states = residual + self._branch(hidden_states)
         else:
             # Post-norm: Attention
             hidden_states, self_attn_weights, present_key_value = self.self_attn(
@@ -350,13 +626,8 @@ class UMichSLMDecoderLayerWithParallelMLP(nn.Module):
         # Self-attention
         self.self_attn = attention_class(config=config, layer_idx=layer_idx)
 
-        # MLP (SwiGLU)
-        self.mlp = SwiGLUMLP(
-            hidden_size=config.hidden_size,
-            intermediate_size=config.intermediate_size,
-            hidden_act=getattr(config, "hidden_act", "silu"),
-            bias=getattr(config, "mlp_bias", False),
-        )
+        # MLP (SwiGLU, optionally MatFormer nested-FFN)
+        self.mlp = _build_mlp(config, layer_idx)
 
         # Single layer norm for parallel computation
         norm_class = get_rmsnorm_class(
@@ -672,6 +943,9 @@ class UMichSLMMoDDecoderLayer(nn.Module):
             capacity=capacity_default,
             aux_loss_weight=getattr(config, "mod_aux_loss_weight", 0.01),
             use_aux_predictor=getattr(config, "mod_use_aux_predictor", False),
+            gate_fn=getattr(config, "mod_gate_fn", "raw"),
+            tanh_alpha=getattr(config, "mod_tanh_alpha", 0.2),
+            capacity_warmup_steps=getattr(config, "mod_capacity_warmup_steps", 0),
         )
 
         # Number of leading positions (e.g. SWA persistent globals) that must
@@ -682,12 +956,13 @@ class UMichSLMMoDDecoderLayer(nn.Module):
         # Cache values used by ``set_inserted`` to flip MoD capacity in-place
         # without re-instantiating the router.
         self._mod_capacity_default = capacity_default
-        self._mod_capacity_inserted = float(
-            getattr(config, "mod_capacity_inserted", 0.5)
-        )
+        self._mod_capacity_inserted = float(getattr(config, "mod_capacity_inserted", 0.5))
 
         # MoD gate for combining outputs
-        self.gate = MoDGate(config.hidden_size)
+        self.gate = MoDGate(
+            config.hidden_size,
+            symmetric_reweight=getattr(config, "mod_symmetric_reweight", False),
+        )
 
         # Select attention implementation (supports both standard and MLA)
         attention_class = _get_attention_class(config, layer_idx)
@@ -695,13 +970,8 @@ class UMichSLMMoDDecoderLayer(nn.Module):
         # Self-attention
         self.self_attn = attention_class(config=config, layer_idx=layer_idx)
 
-        # MLP (SwiGLU)
-        self.mlp = SwiGLUMLP(
-            hidden_size=config.hidden_size,
-            intermediate_size=config.intermediate_size,
-            hidden_act=getattr(config, "hidden_act", "silu"),
-            bias=getattr(config, "mlp_bias", False),
-        )
+        # MLP (SwiGLU, optionally MatFormer nested-FFN)
+        self.mlp = _build_mlp(config, layer_idx)
 
         # Layer norms
         norm_class = get_rmsnorm_class(
@@ -842,10 +1112,232 @@ class UMichSLMMoDDecoderLayer(nn.Module):
         return outputs
 
 
+class UMichSLMMoDMLPDecoderLayer(nn.Module):
+    """MoD-MLP decoder layer: routing gates ONLY the FFN sublayer (Arm A).
+
+    Attention (and therefore all KV / recurrent cross-token state) runs dense
+    for every token; the router decides per token whether the FFN contribution
+    is added. Structural consequences vs full-block MoD:
+
+    - no KV-cache divergence at decode time (attention state is never routed),
+    - safe alongside recurrent token mixers (the FFN is position-wise; F3),
+    - total bypass is impossible (every token gets full attention every layer).
+
+    Two routing sources:
+    - *own router* (per-layer variant): this layer owns a ``MoDRouter`` applied
+      to the post-attention normed hidden state.
+    - *external routing* (block-atomic MLP variant, ``own_router=False``): the
+      model computes one decision at the block head and passes
+      ``mod_routing=(router_weights, selected_mask)`` into every member layer;
+      the aux loss is emitted once at model level.
+
+    When routing is uniform across rows (top-k with a forced prefix guarantees
+    this) and no cache is in use, the FFN is executed only on the selected
+    tokens (gather -> MLP -> scatter) — the FFN is position-wise, so unlike the
+    attention gather path this realizes the FLOP savings exactly with no mask
+    surgery. Ragged or cached decisions fall back to the dense-compute
+    ``MoDGate`` path with identical math.
+
+    Args:
+        config: Model configuration object.
+        layer_idx: Index of this layer in the stack.
+        own_router: Whether this layer owns its router (per-layer variant).
+    """
+
+    def __init__(self, config, layer_idx: int, own_router: bool = True):
+        super().__init__()
+        self.hidden_size = config.hidden_size
+        self.layer_idx = layer_idx
+        self.mod_gather_bucket = int(getattr(config, "mod_gather_bucket", 128))
+        if getattr(config, "norm_placement", "pre") != "pre":
+            raise ValueError(
+                "UMichSLMMoDMLPDecoderLayer supports norm_placement='pre' only "
+                f"(got {config.norm_placement!r})."
+            )
+
+        if own_router:
+            self.router = MoDRouter(
+                hidden_size=config.hidden_size,
+                capacity=float(getattr(config, "mod_capacity", 0.125)),
+                aux_loss_weight=getattr(config, "mod_aux_loss_weight", 0.01),
+                use_aux_predictor=getattr(config, "mod_use_aux_predictor", False),
+                gate_fn=getattr(config, "mod_gate_fn", "raw"),
+                tanh_alpha=getattr(config, "mod_tanh_alpha", 0.2),
+                capacity_warmup_steps=getattr(config, "mod_capacity_warmup_steps", 0),
+                router_mode=getattr(config, "mod_router_mode", "topk"),
+                route_bias_lr=getattr(config, "mod_route_bias_lr", 1e-3),
+            )
+        else:
+            self.router = None
+
+        self.gate = MoDGate(
+            config.hidden_size,
+            symmetric_reweight=getattr(config, "mod_symmetric_reweight", False),
+        )
+
+        # Set by the model's forward each step (SWA persistent globals).
+        self.num_protected_prefix: int = 0
+
+        self.self_attn = _get_attention_class(config, layer_idx)(config=config, layer_idx=layer_idx)
+        self.mlp = _build_mlp(config, layer_idx)
+
+        norm_class = get_rmsnorm_class(
+            zero_centered=getattr(config, "use_zero_centered_rmsnorm", False)
+        )
+        self.input_layernorm = norm_class(
+            config.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-6)
+        )
+        self.post_attention_layernorm = norm_class(
+            config.hidden_size, eps=getattr(config, "rms_norm_eps", 1e-6)
+        )
+
+        # MoDA FFN projection (optional; parity with the other layer classes)
+        self.use_moda = getattr(config, "use_moda", False)
+        if self.use_moda and getattr(config, "moda_use_ffn_kv", True):
+            from .moda import MoDAFFNProjection
+
+            num_kv_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
+            head_dim = config.hidden_size // config.num_attention_heads
+            self.moda_ffn_proj = MoDAFFNProjection(config.hidden_size, num_kv_heads, head_dim)
+        else:
+            self.moda_ffn_proj = None
+
+    def _gated_mlp(
+        self,
+        hidden_after_attn: torch.Tensor,
+        normed_for_mlp: torch.Tensor,
+        router_weights: torch.Tensor,
+        selected_mask: torch.Tensor,
+        use_cache: bool,
+    ) -> torch.Tensor:
+        """Apply the FFN only where routed; declined tokens pass through bitwise."""
+        from .mixture_of_depths import mod_gather_index
+
+        # Compact path: run the FFN on only the selected tokens. Valid because
+        # the FFN is position-wise; requires uniform per-row counts and no
+        # symmetric reweighting (STRing perturbs skipped tokens too).
+        if not use_cache and not self.gate.symmetric_reweight:
+            gathered_idx = mod_gather_index(selected_mask, bucket=self.mod_gather_bucket)
+            if gathered_idx is not None:
+                gather_idx, gather_valid = gathered_idx
+                B, T, H = normed_for_mlp.shape
+                idx_h = gather_idx.unsqueeze(-1).expand(B, gather_idx.shape[1], H)
+                compact = torch.gather(normed_for_mlp, 1, idx_h)
+                mlp_out = self.mlp(compact)
+                w = torch.gather(router_weights, 1, gather_idx).unsqueeze(-1)
+                if gather_valid is not None:
+                    # Ragged (threshold-router) gather: a padding slot indexes a
+                    # real but UNSELECTED position. The FFN is position-wise so
+                    # there is no attention contamination, but the scatter would
+                    # still write `hidden + w*mlp` over a token that was declined.
+                    # Zeroing its weight makes the write a bitwise pass-through.
+                    w = w * gather_valid.unsqueeze(-1).to(w.dtype)
+                gathered = torch.gather(hidden_after_attn, 1, idx_h) + w * mlp_out
+                out = hidden_after_attn.clone()
+                out.scatter_(1, idx_h, gathered)
+                return out
+
+        # Dense fallback (ragged selection / cached decode / STRing): compute
+        # the FFN everywhere and gate — identical math for selected tokens,
+        # bitwise pass-through for declined ones.
+        mlp_output = self.mlp(normed_for_mlp)
+        return self.gate(
+            hidden_states=hidden_after_attn,
+            block_output=mlp_output,
+            router_weights=router_weights,
+            selected_mask=selected_mask,
+        )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        output_mod_info: Optional[bool] = False,
+        mod_routing: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        depth_kv_cache=None,
+    ) -> Tuple[torch.FloatTensor, ...]:
+        """Forward pass: dense attention, routed FFN.
+
+        Args:
+            mod_routing: Optional externally-computed ``(router_weights,
+                selected_mask)`` from a block-head router (block-atomic MLP
+                variant). Required when the layer was built with
+                ``own_router=False``.
+
+        Returns:
+            Tuple of hidden_states plus the usual optional entries
+            (attention weights, present KV, MoDOutput).
+        """
+        residual = hidden_states
+
+        # Dense attention for every token — the defining invariant of Arm A.
+        normed = self.input_layernorm(hidden_states)
+        attn_output, self_attn_weights, present_key_value = self.self_attn(
+            hidden_states=normed,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+            depth_kv_cache=depth_kv_cache,
+        )
+        hidden_after_attn = residual + attn_output
+
+        normed_for_mlp = self.post_attention_layernorm(hidden_after_attn)
+
+        # MoDA: project FFN input to depth KV (dense — routing never gates it)
+        if depth_kv_cache is not None and self.moda_ffn_proj is not None:
+            k_ffn, v_ffn = self.moda_ffn_proj(normed_for_mlp)
+            depth_kv_cache.append(self.layer_idx, k_ffn, v_ffn)
+
+        aux_loss = None
+        if mod_routing is not None:
+            router_weights, selected_mask = mod_routing
+        else:
+            if self.router is None:
+                raise RuntimeError(
+                    "MoDMLP layer built with own_router=False requires mod_routing "
+                    "from the block-head router."
+                )
+            # Route on the post-attention normed hidden state.
+            router_weights, selected_mask, aux_loss = self.router(
+                normed_for_mlp,
+                use_cache=use_cache,
+                force_route_prefix=int(self.num_protected_prefix),
+            )
+        # For the instrumentation collector (routing-fraction metrics).
+        self._last_selected_mask = selected_mask.detach()
+
+        hidden_states = self._gated_mlp(
+            hidden_after_attn, normed_for_mlp, router_weights, selected_mask, bool(use_cache)
+        )
+
+        outputs = (hidden_states,)
+        if output_attentions:
+            outputs += (self_attn_weights,)
+        if use_cache:
+            outputs += (present_key_value,)
+        if output_mod_info:
+            outputs += (
+                MoDOutput(
+                    hidden_states=hidden_states,
+                    router_weights=router_weights,
+                    selected_mask=selected_mask,
+                    aux_loss=aux_loss,
+                ),
+            )
+        return outputs
+
+
 def get_decoder_layer_class(
     parallel_mlp: bool = False,
     use_moe: bool = False,
     use_mod: bool = False,
+    use_mod_mlp: bool = False,
 ):
     """Get the decoder layer class.
 
@@ -853,12 +1345,15 @@ def get_decoder_layer_class(
         parallel_mlp: Whether to use parallel MLP architecture.
         use_moe: Whether to use Mixture of Experts.
         use_mod: Whether to use Mixture of Depths.
+        use_mod_mlp: Whether to use MoD-MLP (FFN-only routing; wins over use_mod).
 
     Returns:
         The decoder layer class.
     """
     if use_moe:
         return UMichSLMMoEDecoderLayer
+    if use_mod_mlp:
+        return UMichSLMMoDMLPDecoderLayer
     if use_mod:
         return UMichSLMMoDDecoderLayer
     if parallel_mlp:

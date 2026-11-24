@@ -46,15 +46,15 @@ class TestDeltaNetMLAHybrid:
         # Layers 0,1,2 -> DeltaNet
         for layer_idx in (0, 1, 2, 4, 5, 6):
             cls = _get_attention_class(c, layer_idx)
-            assert cls.__name__ == "GatedDeltaNet", (
-                f"layer {layer_idx}: expected GatedDeltaNet, got {cls.__name__}"
-            )
+            assert (
+                cls.__name__ == "GatedDeltaNet"
+            ), f"layer {layer_idx}: expected GatedDeltaNet, got {cls.__name__}"
         # Layers 3, 7 -> MLA
         for layer_idx in (3, 7):
             cls = _get_attention_class(c, layer_idx)
-            assert cls.__name__.startswith("UMichSLMMLA"), (
-                f"layer {layer_idx}: expected MLA, got {cls.__name__}"
-            )
+            assert cls.__name__.startswith(
+                "UMichSLMMLA"
+            ), f"layer {layer_idx}: expected MLA, got {cls.__name__}"
 
 
 class TestSWAGlobalsMLAHybrid:
@@ -76,14 +76,14 @@ class TestSWAGlobalsMLAHybrid:
         )
         for layer_idx in (0, 1, 2, 4, 5, 6):
             cls = _get_attention_class(c, layer_idx)
-            assert cls.__name__ == "SWAWithGlobalsAttention", (
-                f"layer {layer_idx}: expected SWAWithGlobalsAttention, got {cls.__name__}"
-            )
+            assert (
+                cls.__name__ == "SWAWithGlobalsAttention"
+            ), f"layer {layer_idx}: expected SWAWithGlobalsAttention, got {cls.__name__}"
         for layer_idx in (3, 7):
             cls = _get_attention_class(c, layer_idx)
-            assert cls.__name__.startswith("UMichSLMMLA"), (
-                f"layer {layer_idx}: expected MLA, got {cls.__name__}"
-            )
+            assert cls.__name__.startswith(
+                "UMichSLMMLA"
+            ), f"layer {layer_idx}: expected MLA, got {cls.__name__}"
 
 
 class TestLegacyMode:

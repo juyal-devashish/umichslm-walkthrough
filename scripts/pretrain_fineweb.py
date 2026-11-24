@@ -432,6 +432,39 @@ def create_model_config(args: argparse.Namespace, vocab_size: Optional[int] = No
         if _was_set("mtp_loss_weight"):
             config["mtp_loss_weight"] = args.mtp_loss_weight
 
+    # Token-Superposition Training (TST). The init config records the flags;
+    # llamafactory_train.py reads them off model.config and attaches the
+    # TSTTrainerCallback at HF Trainer instantiation time.
+    if _was_set("tst_enabled"):
+        config["tst_enabled"] = bool(args.tst_enabled)
+    if args.tst_enabled or config.get("tst_enabled", False):
+        if _was_set("tst_bag_size"):
+            config["tst_bag_size"] = int(args.tst_bag_size)
+        if _was_set("tst_recovery_ratio"):
+            config["tst_recovery_ratio"] = float(args.tst_recovery_ratio)
+        if _was_set("tst_loss_weighting"):
+            config["tst_loss_weighting"] = args.tst_loss_weighting
+
+    # Delphi recipe: stash run-context fields onto the model config so the
+    # Trainer-init patch in llamafactory_train.py can swap optimizer/scheduler.
+    if args.delphi_recipe:
+        config["delphi_recipe"] = True
+        config["delphi_optimizer"] = args.delphi_optimizer
+        config["delphi_schedule"] = args.delphi_schedule
+        config["delphi_warmup_frac"] = float(args.delphi_warmup_frac)
+        config["delphi_decay_frac"] = float(args.delphi_decay_frac)
+        config["delphi_eta0_proj"] = float(args.delphi_eta0_proj)
+        config["delphi_eta0_adam"] = float(args.delphi_eta0_adam)
+        config["delphi_batch_ref"] = int(args.delphi_batch_ref)
+        config["delphi_token_ref"] = float(args.delphi_token_ref)
+        config["delphi_horizon_exp"] = float(args.delphi_horizon_exp)
+        config["delphi_epsilon0"] = float(args.delphi_epsilon0)
+        config["delphi_beta2_max"] = float(args.delphi_beta2_max)
+        config["delphi_beta2_min"] = float(args.delphi_beta2_min)
+        config["delphi_grad_clip"] = float(args.delphi_grad_clip)
+        # Run-context (filled in deeper in main() after max_steps is known —
+        # see the "delphi_run_*" block).
+
     # Mixture of Experts
     if _was_set("use_moe"):
         config["use_moe"] = args.use_moe
@@ -533,8 +566,10 @@ def save_model_init(config_dict: dict, output_path: Path, tokenizer_path: Option
         print(f"Loading tokenizer from {tokenizer_path}")
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
     else:
-        # Use SmolLM2 tokenizer as default
-        default_tokenizer_path = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+        # Default to the project SuperBPE-56000 tokenizer (see
+        # umich_slm.tokenizer_defaults / TOKENIZER_TRAINING_PLAN.md).
+        from umich_slm.tokenizer_defaults import get_tokenizer_path
+        default_tokenizer_path = get_tokenizer_path()
         print(f"Loading tokenizer from {default_tokenizer_path}...")
         tokenizer = AutoTokenizer.from_pretrained(default_tokenizer_path, trust_remote_code=True)
 
@@ -999,6 +1034,39 @@ def main():
     mod_group.add_argument("--mod_every_n_layers", type=int, default=2, help="MoD frequency")
     mod_group.add_argument("--mod_aux_loss_weight", type=float, default=0.01, help="MoD aux loss weight")
 
+    # Token-Superposition Training (Peng et al., arXiv:2605.06546)
+    tst_group = parser.add_argument_group("Token-Superposition Training")
+    tst_group.add_argument("--tst_enabled", action="store_true",
+                           help="Enable TST phase (i) + recovery.")
+    tst_group.add_argument("--tst_bag_size", type=int, default=6,
+                           help="TST bag size s (paper: 4-8 dense, 16 for 10B MoE).")
+    tst_group.add_argument("--tst_recovery_ratio", type=float, default=0.3,
+                           help="Fraction of total steps in TST phase (i) before recovery.")
+    tst_group.add_argument("--tst_loss_weighting", type=str, default="uniform",
+                           choices=["uniform", "power_law"],
+                           help="Within-bag MCE weighting (power_law for s>=8).")
+
+    # Delphi-style scaling recipe (openathena.ai/blog/delphi)
+    delphi_group = parser.add_argument_group("Delphi recipe (token-horizon LR, AdamH, WSD)")
+    delphi_group.add_argument("--delphi_recipe", action="store_true",
+                              help="Enable Delphi recipe: AdamH + WSD + token-horizon LR. "
+                                   "Overrides --optimizer/--lr_scheduler/--learning_rate/--weight_decay/"
+                                   "--warmup_ratio/--max_grad_norm.")
+    delphi_group.add_argument("--delphi_optimizer", type=str, default="adamh", choices=["adamh", "adamw"])
+    delphi_group.add_argument("--delphi_schedule", type=str, default="wsd",
+                              choices=["wsd", "cosine", "linear"])
+    delphi_group.add_argument("--delphi_warmup_frac", type=float, default=0.10)
+    delphi_group.add_argument("--delphi_decay_frac", type=float, default=0.20)
+    delphi_group.add_argument("--delphi_eta0_proj", type=float, default=6.30e-3)
+    delphi_group.add_argument("--delphi_eta0_adam", type=float, default=6.56e-4)
+    delphi_group.add_argument("--delphi_batch_ref", type=int, default=64)
+    delphi_group.add_argument("--delphi_token_ref", type=float, default=2.5e9)
+    delphi_group.add_argument("--delphi_horizon_exp", type=float, default=0.30)
+    delphi_group.add_argument("--delphi_epsilon0", type=float, default=1.85e-8)
+    delphi_group.add_argument("--delphi_beta2_max", type=float, default=0.9999)
+    delphi_group.add_argument("--delphi_beta2_min", type=float, default=0.9)
+    delphi_group.add_argument("--delphi_grad_clip", type=float, default=0.1)
+
     # Multi-Token Prediction
     mtp_group = parser.add_argument_group("Multi-Token Prediction")
     mtp_group.add_argument("--use_mtp", action="store_true", help="Enable MTP")
@@ -1069,7 +1137,8 @@ def main():
     opt_group.add_argument("--bf16", action="store_true", default=True, help="Use bfloat16")
     opt_group.add_argument("--fp16", action="store_true", help="Use float16")
     opt_group.add_argument("--gradient_checkpointing", action="store_true", default=True, help="Gradient checkpointing")
-    opt_group.add_argument("--flash_attn", action="store_true", default=True, help="Flash Attention 2")
+    opt_group.add_argument("--flash_attn", action=argparse.BooleanOptionalAction, default=True,
+                           help="Flash Attention 2 (use --no-flash_attn on nodes without flash-attn; falls back to sdpa)")
     opt_group.add_argument("--deepspeed", type=str, default=None, help="Optional DeepSpeed config path for ZeRO memory optimization (not required for multi-GPU training)")
 
     # Logging and saving
@@ -1093,7 +1162,7 @@ def main():
     misc_group.add_argument("--num_workers", type=int, default=8, help="Data loading workers")
     misc_group.add_argument("--dry_run", action="store_true", help="Generate config without training")
     misc_group.add_argument("--config_only", action="store_true", help="Only save configs")
-    misc_group.add_argument("--tokenizer_path", type=str, default=None, help="Tokenizer path (default: HuggingFaceTB/SmolLM2-1.7B-Instruct)")
+    misc_group.add_argument("--tokenizer_path", type=str, default=None, help="Tokenizer path (default: project SuperBPE-56000; see umich_slm.tokenizer_defaults)")
 
     args = parser.parse_args()
 
@@ -1175,6 +1244,18 @@ def main():
     print("\n=== Creating Model Configuration ===")
     config_dict = create_model_config(args, vocab_size=vocab_size)
     print(f"Model size: {args.size}")
+
+    # Delphi recipe run-context: requires max_steps which is now known.
+    if getattr(args, "delphi_recipe", False):
+        global_batch = args.batch_size * args.gradient_accumulation_steps * args.num_gpus
+        run_tokens = train_tokens
+        config_dict["delphi_run_tokens"] = float(run_tokens)
+        config_dict["delphi_run_batch"] = int(global_batch)
+        config_dict["delphi_run_total_steps"] = int(max_steps)
+        print(
+            f"Delphi recipe: T={run_tokens:.2e}, B={global_batch}, steps={max_steps}, "
+            f"opt={args.delphi_optimizer}, sched={args.delphi_schedule}"
+        )
 
     # Save initialized model
     model_path = output_dir / "models" / run_name

@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=lm-eval-baselines
-#SBATCH --mail-user=<ACCOUNT>@umich.edu
+#SBATCH --mail-user=user@example.com
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --cpus-per-task=4
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem-per-cpu=16G
 #SBATCH --time=4:00:00
-#SBATCH --account=cse598s004w26_class
+#SBATCH --account=<account>
 #SBATCH --partition=gpu-rtx6000
 #SBATCH --gpus=1
 #SBATCH --output=/home/%u/umich-slm/slurm-logs/%x-%j.log
@@ -16,7 +16,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate umich-slm
 
 export PROJECT_DIR="$HOME/umich-slm"
-export SCRATCH="/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data"
+export SCRATCH="/path/to/data"
 export HF_HOME="$SCRATCH/.cache/huggingface"
 export TOKENIZERS_PARALLELISM=false
 export DISABLE_VERSION_CHECK=1

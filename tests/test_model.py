@@ -12,6 +12,19 @@ from umich_slm import (
 )
 
 
+# Presets carry the production vocab (56000, untied), so each preset-based model
+# allocates+inits two 56000xhidden matrices (~28M params) before any forward pass.
+# Vocab size is irrelevant to what these preset tests check (shapes, cache
+# round-trips, generation), so shrink it to keep instantiation fast.
+_TEST_VOCAB = 2048
+
+
+def _small_config(name, **overrides):
+    """get_umichslm_config with a tiny vocab so preset model builds stay cheap."""
+    overrides.setdefault("vocab_size", _TEST_VOCAB)
+    return get_umichslm_config(name, **overrides)
+
+
 class TestUMichSLMModel:
     """Tests for the base model."""
 
@@ -21,9 +34,7 @@ class TestUMichSLMModel:
         outputs = model(**sample_input)
 
         batch_size, seq_len = sample_input["input_ids"].shape
-        assert outputs.last_hidden_state.shape == (
-            batch_size, seq_len, tiny_config.hidden_size
-        )
+        assert outputs.last_hidden_state.shape == (batch_size, seq_len, tiny_config.hidden_size)
 
     def test_forward_with_cache(self, tiny_config, sample_input):
         """Should return cache when use_cache=True."""
@@ -76,9 +87,7 @@ class TestUMichSLMForCausalLM:
         outputs = tiny_model(**sample_input)
 
         batch_size, seq_len = sample_input["input_ids"].shape
-        assert outputs.logits.shape == (
-            batch_size, seq_len, tiny_model.config.vocab_size
-        )
+        assert outputs.logits.shape == (batch_size, seq_len, tiny_model.config.vocab_size)
 
     def test_loss_computation(self, tiny_model, sample_input_with_labels):
         """Should compute loss when labels provided."""
@@ -161,7 +170,7 @@ class TestModelPresets:
 
     def test_tiny_preset(self):
         """Tiny preset should create a small model."""
-        config = get_umichslm_config("tiny")
+        config = _small_config("tiny")
         model = UMichSLMForCausalLM(config)
 
         # Should be a valid model
@@ -171,7 +180,7 @@ class TestModelPresets:
 
     def test_qwen3_5_like_tiny_preset(self):
         """Qwen3.5-like tiny preset should instantiate and run a forward pass."""
-        config = get_umichslm_config("qwen3_5_like_tiny")
+        config = _small_config("qwen3_5_like_tiny")
         model = UMichSLMForCausalLM(config)
 
         input_ids = torch.randint(0, config.vocab_size, (1, 10))
@@ -180,7 +189,7 @@ class TestModelPresets:
 
     def test_qwen3_5_like_tiny_generation_with_cache(self):
         """Qwen3.5-like tiny preset should generate with cache enabled."""
-        config = get_umichslm_config("qwen3_5_like_tiny")
+        config = _small_config("qwen3_5_like_tiny")
         model = UMichSLMForCausalLM(config)
         input_ids = torch.randint(0, min(100, config.vocab_size), (1, 10))
 
@@ -198,7 +207,7 @@ class TestModelPresets:
 
     def test_qwen3_5_like_cache_reuse_returns_hf_cache(self):
         """Hybrid DeltaNet generation cache should round-trip as a transformers Cache."""
-        config = get_umichslm_config("qwen3_5_like_tiny", deltanet_first_n_layers=1)
+        config = _small_config("qwen3_5_like_tiny", deltanet_first_n_layers=1)
         model = UMichSLMForCausalLM(config)
         input_ids = torch.randint(0, min(100, config.vocab_size), (1, 6))
 
@@ -230,7 +239,7 @@ class TestModelPresets:
 
     def test_qwen3_5_like_cache_legacy_roundtrip(self):
         """DeltaNet cache should support explicit legacy conversion without losing reuse."""
-        config = get_umichslm_config("qwen3_5_like_tiny", deltanet_first_n_layers=1)
+        config = _small_config("qwen3_5_like_tiny", deltanet_first_n_layers=1)
         model = UMichSLMForCausalLM(config)
         input_ids = torch.randint(0, min(100, config.vocab_size), (1, 6))
 
@@ -241,7 +250,10 @@ class TestModelPresets:
         assert isinstance(legacy_cache, tuple)
         assert len(legacy_cache) == config.num_hidden_layers
         assert any(isinstance(layer_cache, tuple) for layer_cache in legacy_cache)
-        assert any(layer_cache is not None and not isinstance(layer_cache, tuple) for layer_cache in legacy_cache)
+        assert any(
+            layer_cache is not None and not isinstance(layer_cache, tuple)
+            for layer_cache in legacy_cache
+        )
 
         next_token = torch.randint(0, min(100, config.vocab_size), (1, 1))
         with torch.no_grad():
@@ -405,25 +417,24 @@ class TestZeroCenteredRMSNorm:
 class TestModelTokenizerCompatibility:
     """Tests to verify model works correctly with real tokenizers."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def tokenizer(self):
-        """Load a tokenizer for testing. Skips if transformers not available."""
-        try:
-            from transformers import AutoTokenizer
-        except ImportError:
-            pytest.skip("transformers not available")
+        """Load the project SuperBPE tokenizer once for the whole class.
 
-        # Try to load LLaMA 3 tokenizer, but skip if not available
-        tokenizer_path = "meta-llama/Meta-Llama-3-8B"
+        Class-scoped so the (single) tokenizer load is shared across these tests
+        instead of re-running per test. Loads from the local prep path by default;
+        set ``$UMICHSLM_TOKENIZER_PATH`` on hosts without it mounted. Skips
+        gracefully if neither transformers nor the tokenizer is available.
+        """
         try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                tokenizer_path,
-                trust_remote_code=True,
-                use_fast=False,  # Use slow tokenizer for compatibility
-            )
-            return tokenizer
+            from umich_slm.tokenizer_defaults import load_default_tokenizer
+        except ImportError:
+            pytest.skip("transformers/tokenizer_defaults not available")
+
+        try:
+            return load_default_tokenizer()
         except Exception as e:
-            pytest.skip(f"Could not load tokenizer from {tokenizer_path}: {e}")
+            pytest.skip(f"Could not load project tokenizer: {e}")
 
     def test_model_vocab_size_matches_tokenizer(self, tokenizer):
         """Model vocab_size should match tokenizer vocab_size."""
@@ -477,9 +488,9 @@ class TestModelTokenizerCompatibility:
 
         # Verify all token IDs are within valid range
         assert input_ids.min() >= 0
-        assert input_ids.max() < vocab_size, (
-            f"Token ID {input_ids.max()} exceeds vocab_size {vocab_size}"
-        )
+        assert (
+            input_ids.max() < vocab_size
+        ), f"Token ID {input_ids.max()} exceeds vocab_size {vocab_size}"
 
         # Forward pass should work without errors
         with torch.no_grad():
@@ -520,14 +531,18 @@ class TestModelTokenizerCompatibility:
                 input_ids,
                 max_new_tokens=5,
                 do_sample=False,
-                pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
+                pad_token_id=(
+                    tokenizer.pad_token_id
+                    if tokenizer.pad_token_id is not None
+                    else tokenizer.eos_token_id
+                ),
             )
 
         # Verify generated token IDs are within valid range
         assert generated_ids.min() >= 0
-        assert generated_ids.max() < vocab_size, (
-            f"Generated token ID {generated_ids.max()} exceeds vocab_size {vocab_size}"
-        )
+        assert (
+            generated_ids.max() < vocab_size
+        ), f"Generated token ID {generated_ids.max()} exceeds vocab_size {vocab_size}"
 
         # Should be able to decode without errors
         decoded = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
@@ -605,9 +620,60 @@ class TestModelTokenizerCompatibility:
         with torch.no_grad():
             embeddings = input_embeddings(sample_token_ids)
             assert embeddings.shape == (sample_size, config.hidden_size)
-        
+
         # Also test boundary cases: first and last token IDs
         boundary_ids = torch.tensor([0, vocab_size - 1], dtype=torch.long)
         with torch.no_grad():
             boundary_embeddings = input_embeddings(boundary_ids)
             assert boundary_embeddings.shape == (2, config.hidden_size)
+
+
+class TestChunkedLMLossSyncFree:
+    """The chunked CE must handle a fully-ignored batch WITHOUT a host sync.
+
+    ``total_count.item() == 0`` was a device->host sync on every forward, placed at
+    the end of the graph (before the backward is queued), to guard a degenerate case
+    a pretraining run never sees. It is now a device-side ``clamp``; these pin that
+    the guarded behaviour is unchanged.
+    """
+
+    def _model(self):
+        import torch
+
+        from umich_slm.configs.presets import get_umichslm_config
+        from umich_slm.modeling_umichslm import UMichSLMForCausalLM
+
+        cfg = get_umichslm_config("tiny")
+        cfg.vocab_size = 64
+        cfg.num_hidden_layers = 2
+        cfg.hidden_size = 32
+        cfg.intermediate_size = 64
+        cfg.num_attention_heads = 4
+        cfg.num_key_value_heads = 4
+        cfg._attn_implementation = "eager"
+        return UMichSLMForCausalLM(cfg).eval(), cfg
+
+    def test_all_ignored_batch_is_zero_and_finite(self):
+        import torch
+
+        m, cfg = self._model()
+        h = torch.randn(2, 8, cfg.hidden_size, requires_grad=True)
+        loss = m._compute_shifted_lm_loss_chunked(h, torch.full((2, 8), -100))
+        assert torch.isfinite(loss) and float(loss) == 0.0
+        loss.backward()  # must not produce NaN through the zero denominator
+        assert torch.isfinite(h.grad).all()
+
+    def test_normal_batch_matches_unchunked_cross_entropy(self):
+        import torch
+        import torch.nn.functional as F
+
+        m, cfg = self._model()
+        h = torch.randn(2, 16, cfg.hidden_size)
+        labels = torch.randint(0, cfg.vocab_size, (2, 16))
+        got = m._compute_shifted_lm_loss_chunked(h, labels)
+        ref = F.cross_entropy(
+            m.lm_head(h[:, :-1, :]).reshape(-1, cfg.vocab_size).float(),
+            labels[:, 1:].reshape(-1),
+            ignore_index=-100,
+        )
+        assert torch.allclose(got, ref, atol=1e-5), (float(got), float(ref))

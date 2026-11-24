@@ -11,7 +11,7 @@ def get_args():
     parser.add_argument("--model_path", type=str, help="Path to SLM")
     parser.add_argument("--layer_idx", type=int, default=-1, help="Which layer to probe (-1 for the last layer)")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--dataset_path", type=str, required=True, help="HF dataset name (e.g., 'gsm8k') or path to local file (e.g., /scratch/.../data.json)")
+    parser.add_argument("--dataset_path", type=str, required=True, help="HF dataset name (e.g., 'gsm8k') or path to local file (e.g., /path/to/data)")
     parser.add_argument("--text_col", type=str, default="text", help="The column name containing the input text")
     parser.add_argument("--label_col", type=str, default="label", help="The column name containing the classification label")
     return parser.parse_args()

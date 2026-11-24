@@ -63,10 +63,49 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from transformers.modeling_outputs import ModelOutput
 
 from .rmsnorm import RMSNorm
 from .swiglu import SwiGLUMLP
+
+
+def chunked_ce_loss(hidden, lm_head, labels, ignore_index=-100, chunk_tokens=4096):
+    """Mean cross-entropy of ``lm_head(hidden)`` without materialising all logits.
+
+    Equivalent to ``CrossEntropyLoss(ignore_index, reduction="mean")`` on the
+    flattened logits, but peak memory is one slice's logits instead of all of
+    them.
+
+    Why this exists: at vocab 56000 the MTP head's logits for a [16, 4096] batch
+    are 16*4096*56000*4B = 13.7 GiB in fp32, which OOMed all five MTP cells on
+    the 47.4GB A6000 (2026-07-21) even though the head itself is cheap. Slicing
+    the loss ALONE does not help — autograd saves every slice's logits for the
+    backward — so each slice is wrapped in a checkpoint and its logits are
+    recomputed during backward. fp32 is kept (softmax stability); it is the
+    [tokens x vocab] extent, not the dtype, that has to go.
+    """
+    flat_h = hidden.reshape(-1, hidden.shape[-1])
+    flat_l = labels.reshape(-1)
+
+    def _slice_loss(h, l):
+        logits = lm_head(h)
+        if logits.dtype != torch.float32:
+            logits = logits.float()
+        return F.cross_entropy(logits, l, ignore_index=ignore_index, reduction="sum")
+
+    total = None
+    for i in range(0, flat_h.shape[0], chunk_tokens):
+        h, l = flat_h[i : i + chunk_tokens], flat_l[i : i + chunk_tokens]
+        if torch.is_grad_enabled() and h.requires_grad:
+            part = checkpoint(_slice_loss, h, l, use_reentrant=False)
+        else:
+            part = _slice_loss(h, l)
+        total = part if total is None else total + part
+    if total is None:
+        return hidden.new_zeros((), dtype=torch.float32)
+    # Match reduction="mean": divide by the number of non-ignored targets.
+    return total / (flat_l != ignore_index).sum().clamp(min=1)
 
 
 @dataclass
@@ -87,6 +126,10 @@ class MTPOutput(ModelOutput):
             valid_seq_len decreases with depth.
         num_active_depths: Number of depths that had valid predictions.
             Useful for monitoring training dynamics across depths.
+        hidden_per_depth: Pre-``lm_head`` hidden states per depth ([batch,
+            seq_len - d - 2, hidden]), only with ``return_hidden=True`` (Soft-MTP).
+        targets_per_depth: Non-ignored target count per depth (device scalar),
+            only with ``return_hidden=True``.
 
     Example:
         >>> output = mtp_module(hidden_states, input_ids, labels)
@@ -99,6 +142,8 @@ class MTPOutput(ModelOutput):
     losses_per_depth: Optional[List[torch.FloatTensor]] = None
     logits_per_depth: Optional[List[torch.FloatTensor]] = None
     num_active_depths: Optional[int] = None
+    hidden_per_depth: Optional[List[torch.Tensor]] = None
+    targets_per_depth: Optional[List[torch.Tensor]] = None
 
 
 class MTPProjection(nn.Module):
@@ -257,7 +302,9 @@ class MTPTransformerBlock(nn.Module):
 
             # Use F.scaled_dot_product_attention for efficiency (handles causal mask)
             hidden_states = F.scaled_dot_product_attention(
-                q, k, v,
+                q,
+                k,
+                v,
                 attn_mask=attention_mask,
                 dropout_p=self.dropout_prob if self.training else 0.0,
                 is_causal=True,
@@ -323,17 +370,19 @@ class MTPModule(nn.Module):
         self.projection = MTPProjection(hidden_size)
 
         # Transformer layers (lightweight, typically without attention)
-        self.layers = nn.ModuleList([
-            MTPTransformerBlock(
-                hidden_size=hidden_size,
-                intermediate_size=intermediate_size,
-                rms_norm_eps=rms_norm_eps,
-                hidden_act=hidden_act,
-                use_attention=False,  # Memory-efficient: no attention by default
-                dropout=dropout,
-            )
-            for _ in range(num_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                MTPTransformerBlock(
+                    hidden_size=hidden_size,
+                    intermediate_size=intermediate_size,
+                    rms_norm_eps=rms_norm_eps,
+                    hidden_act=hidden_act,
+                    use_attention=False,  # Memory-efficient: no attention by default
+                    dropout=dropout,
+                )
+                for _ in range(num_layers)
+            ]
+        )
 
         # Output normalization (prepares for LM head projection)
         self.norm = RMSNorm(hidden_size, eps=rms_norm_eps)
@@ -444,17 +493,19 @@ class MultiTokenPrediction(nn.Module):
         self.embed_tokens = embed_tokens
 
         # MTP modules for each prediction depth
-        self.mtp_modules = nn.ModuleList([
-            MTPModule(
-                hidden_size=config.hidden_size,
-                intermediate_size=config.intermediate_size,
-                rms_norm_eps=config.rms_norm_eps,
-                hidden_act=config.hidden_act,
-                num_layers=config.mtp_num_layers,
-                dropout=self.dropout,
-            )
-            for _ in range(self.num_heads)
-        ])
+        self.mtp_modules = nn.ModuleList(
+            [
+                MTPModule(
+                    hidden_size=config.hidden_size,
+                    intermediate_size=config.intermediate_size,
+                    rms_norm_eps=config.rms_norm_eps,
+                    hidden_act=config.hidden_act,
+                    num_layers=config.mtp_num_layers,
+                    dropout=self.dropout,
+                )
+                for _ in range(self.num_heads)
+            ]
+        )
 
         # Output heads - either shared or per-depth
         if self.share_head and lm_head is not None:
@@ -462,14 +513,18 @@ class MultiTokenPrediction(nn.Module):
             self._shared_lm_head = lm_head
         else:
             # Independent heads for each depth
-            self.lm_heads = nn.ModuleList([
-                nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-                for _ in range(self.num_heads)
-            ])
+            self.lm_heads = nn.ModuleList(
+                [
+                    nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+                    for _ in range(self.num_heads)
+                ]
+            )
             self._shared_lm_head = None
 
         # Shared loss function (instantiate once, not in forward loop)
         self.loss_fct = nn.CrossEntropyLoss(ignore_index=-100, reduction="mean")
+        # Tokens per slice of the chunked MTP loss (see chunked_ce_loss).
+        self.loss_chunk_tokens = int(getattr(config, "mtp_loss_chunk_tokens", 4096))
 
     def get_lm_head(self, depth: int) -> nn.Linear:
         """Get the LM head for a specific prediction depth.
@@ -491,6 +546,7 @@ class MultiTokenPrediction(nn.Module):
         labels: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         output_logits: bool = False,
+        return_hidden: bool = False,
     ) -> MTPOutput:
         """Compute MTP loss during training.
 
@@ -515,6 +571,8 @@ class MultiTokenPrediction(nn.Module):
                 Currently unused unless MTP uses attention (disabled by default).
             output_logits: Whether to return logits_per_depth. Default False to
                 save memory during training. Set True only for debugging/analysis.
+            return_hidden: Also return each depth's pre-``lm_head`` hidden states
+                and target counts (the Soft-MTP routing in the model reads them).
 
         Returns:
             MTPOutput containing:
@@ -575,6 +633,8 @@ class MultiTokenPrediction(nn.Module):
 
         losses_per_depth = []
         logits_per_depth = [] if output_logits else None
+        hidden_per_depth = [] if return_hidden else None
+        targets_per_depth = [] if return_hidden else None
 
         # Current representation starts from main model output
         # We'll update this as we go through depths
@@ -593,7 +653,7 @@ class MultiTokenPrediction(nn.Module):
             # Valid length = number of positions we can process = seq_len - d - 2
 
             incorporate_offset = depth + 1  # Offset for tokens to incorporate
-            target_offset = depth + 2       # Offset for target tokens
+            target_offset = depth + 2  # Offset for target tokens
 
             # Check if we have enough tokens for this depth
             if target_offset >= seq_len:
@@ -608,7 +668,9 @@ class MultiTokenPrediction(nn.Module):
             # Get token embeddings to incorporate
             # For position i, we incorporate token at position (i + incorporate_offset)
             # So we take input_ids[incorporate_offset : incorporate_offset + valid_len]
-            incorporate_token_ids = input_ids[:, incorporate_offset:incorporate_offset + valid_len]
+            incorporate_token_ids = input_ids[
+                :, incorporate_offset : incorporate_offset + valid_len
+            ]
 
             # Get embeddings (no gradient - these are inputs, not learned here)
             with torch.no_grad():
@@ -628,19 +690,20 @@ class MultiTokenPrediction(nn.Module):
 
             # Compute logits for prediction
             lm_head = self.get_lm_head(depth)
-            # Cast to float32 only if not already float32 (avoid unnecessary copy)
-            mtp_logits = lm_head(mtp_hidden)
-            if mtp_logits.dtype != torch.float32:
-                mtp_logits = mtp_logits.float()
-
-            # Only store logits if requested (saves significant memory during training)
+            # Only materialise the full logits when the caller actually wants
+            # them; otherwise the loss is computed slice-by-slice below (the
+            # full [B*S, vocab] fp32 tensor is what OOMed every MTP cell).
+            mtp_logits = None
             if output_logits:
+                mtp_logits = lm_head(mtp_hidden)
+                if mtp_logits.dtype != torch.float32:
+                    mtp_logits = mtp_logits.float()
                 logits_per_depth.append(mtp_logits)
 
             # Get target labels for this depth
             # For position i, target is at position (i + target_offset)
             # So we take labels[target_offset : target_offset + valid_len]
-            target_labels = labels[:, target_offset:target_offset + valid_len]
+            target_labels = labels[:, target_offset : target_offset + valid_len]
 
             # IMPORTANT: No shift needed! The MTP output at position i directly
             # predicts the target at position i. The "shift" is implicit in how
@@ -649,11 +712,22 @@ class MultiTokenPrediction(nn.Module):
             # mtp_logits[i] predicts target_labels[i] = labels[target_offset + i]
 
             # Compute cross-entropy loss
-            flat_logits = mtp_logits.reshape(-1, self.vocab_size)
-            flat_labels = target_labels.reshape(-1)
-
-            depth_loss = self.loss_fct(flat_logits, flat_labels)
+            if mtp_logits is not None:
+                depth_loss = self.loss_fct(
+                    mtp_logits.reshape(-1, self.vocab_size), target_labels.reshape(-1)
+                )
+            else:
+                depth_loss = chunked_ce_loss(
+                    mtp_hidden,
+                    lm_head,
+                    target_labels,
+                    ignore_index=self.loss_fct.ignore_index,
+                    chunk_tokens=self.loss_chunk_tokens,
+                )
             losses_per_depth.append(depth_loss)
+            if return_hidden:
+                hidden_per_depth.append(mtp_hidden)
+                targets_per_depth.append((target_labels != self.loss_fct.ignore_index).sum())
 
             # Update hidden states for next depth
             # mtp_hidden[i] now represents "position i having seen tokens up to i+d+1"
@@ -673,6 +747,8 @@ class MultiTokenPrediction(nn.Module):
             losses_per_depth=losses_per_depth,
             logits_per_depth=logits_per_depth,
             num_active_depths=num_active,
+            hidden_per_depth=hidden_per_depth,
+            targets_per_depth=targets_per_depth,
         )
 
 
@@ -724,7 +800,11 @@ def compute_mtp_loss(
         )
         labels = input_ids_or_labels
         mtp_module = labels_or_mtp_module
-        attn_mask = mtp_module_or_attention_mask if isinstance(mtp_module_or_attention_mask, torch.Tensor) else None
+        attn_mask = (
+            mtp_module_or_attention_mask
+            if isinstance(mtp_module_or_attention_mask, torch.Tensor)
+            else None
+        )
 
         mtp_output = mtp_module(
             hidden_states=hidden_states,
@@ -843,10 +923,16 @@ class GloeckleMultiTokenPrediction(nn.Module):
         init_std = float(getattr(config, "initializer_range", 0.02))
         adapter_std = init_std / max(1.0, float(self.num_heads) ** 0.5)
         self.adapters = nn.ModuleList(
-            [nn.Linear(self.hidden_size, self.hidden_size, bias=False) for _ in range(self.num_heads)]
+            [
+                nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+                for _ in range(self.num_heads)
+            ]
         )
         self.lm_heads = nn.ModuleList(
-            [nn.Linear(self.hidden_size, self.vocab_size, bias=False) for _ in range(self.num_heads)]
+            [
+                nn.Linear(self.hidden_size, self.vocab_size, bias=False)
+                for _ in range(self.num_heads)
+            ]
         )
         for adapter in self.adapters:
             nn.init.normal_(adapter.weight, mean=0.0, std=adapter_std)
@@ -854,6 +940,8 @@ class GloeckleMultiTokenPrediction(nn.Module):
             nn.init.normal_(head.weight, mean=0.0, std=adapter_std)
 
         self.loss_fct = nn.CrossEntropyLoss(ignore_index=-100, reduction="mean")
+        # Tokens per slice of the chunked MTP loss (see chunked_ce_loss).
+        self.loss_chunk_tokens = int(getattr(config, "mtp_loss_chunk_tokens", 4096))
 
     def forward(
         self,
@@ -979,9 +1067,5 @@ def build_mtp_module(
     if variant == "deepseek":
         return MultiTokenPrediction(config=config, embed_tokens=embed_tokens, lm_head=lm_head)
     if variant == "gloeckle":
-        return GloeckleMultiTokenPrediction(
-            config=config, embed_tokens=embed_tokens, lm_head=None
-        )
-    raise ValueError(
-        f"Unknown mtp_variant={variant!r}. Expected one of: 'deepseek', 'gloeckle'."
-    )
+        return GloeckleMultiTokenPrediction(config=config, embed_tokens=embed_tokens, lm_head=None)
+    raise ValueError(f"Unknown mtp_variant={variant!r}. Expected one of: 'deepseek', 'gloeckle'.")

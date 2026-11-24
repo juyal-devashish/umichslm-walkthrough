@@ -44,7 +44,7 @@
     }
   },
   "umichslm_sft_train": {
-    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/sft_data/v1/sft_mix_80k/train.json",
+    "file_name": "/path/to/data",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"
@@ -58,7 +58,7 @@
     }
   },
   "umichslm_sft_val": {
-    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/sft_data/v1/sft_mix_80k/val.json",
+    "file_name": "/path/to/data",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"
@@ -72,7 +72,7 @@
     }
   },
   "umichslm_dpo_train": {
-    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/dpo_data/v1/ultrafeedback/train.json",
+    "file_name": "/path/to/data",
     "ranking": true,
     "formatting": "sharegpt",
     "columns": {
@@ -82,7 +82,7 @@
     }
   },
   "umichslm_dpo_val": {
-    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/dpo_data/v1/ultrafeedback/val.json",
+    "file_name": "/path/to/data",
     "ranking": true,
     "formatting": "sharegpt",
     "columns": {
@@ -92,7 +92,7 @@
     }
   },
   "umichslm_dpo_webgpt_train": {
-    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/dpo_data/v1/webgpt/train.json",
+    "file_name": "/path/to/data",
     "ranking": true,
     "formatting": "sharegpt",
     "columns": {
@@ -102,7 +102,7 @@
     }
   },
   "umichslm_dpo_webgpt_val": {
-    "file_name": "/scratch/cse598s004w26_class_root/cse598s004w26_class/shared_data/dpo_data/v1/webgpt/val.json",
+    "file_name": "/path/to/data",
     "ranking": true,
     "formatting": "sharegpt",
     "columns": {

@@ -51,9 +51,13 @@ class TestBuildMTPModule:
 
     def test_factory_routes_to_deepseek_by_default(self):
         c = UMichSLMConfig(
-            vocab_size=128, num_hidden_layers=4, hidden_size=64,
-            intermediate_size=128, num_attention_heads=4,
-            num_key_value_heads=4, use_mtp=True,
+            vocab_size=128,
+            num_hidden_layers=4,
+            hidden_size=64,
+            intermediate_size=128,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            use_mtp=True,
             mtp_num_heads=2,
         )
         embed = nn.Embedding(c.vocab_size, c.hidden_size)
@@ -80,9 +84,9 @@ class TestGloeckleStructure:
         lm = nn.Linear(c.hidden_size, c.vocab_size, bias=False)
         mtp = build_mtp_module(c, embed, lm)
         for i, head in enumerate(mtp.lm_heads):
-            assert head.weight is not lm.weight, (
-                f"Gloeckle MTP head {i} must remain independent regardless of mtp_share_head"
-            )
+            assert (
+                head.weight is not lm.weight
+            ), f"Gloeckle MTP head {i} must remain independent regardless of mtp_share_head"
 
     def test_adapter_count_matches_num_heads(self):
         c = _gloeckle_config()
@@ -143,9 +147,7 @@ class TestGloeckleForward:
         gm = torch.ones(16, dtype=torch.bool)
         # Mask out the entire sequence: every loss target becomes -100.
         gm[:] = False
-        out = mtp(
-            h, input_ids_or_labels=labels, labels=labels, globals_mask=gm
-        )
+        out = mtp(h, input_ids_or_labels=labels, labels=labels, globals_mask=gm)
         # CE with all -100 returns nan, but we use mean reduction so it's
         # actually undefined; per-head losses should be non-finite.
         # The per-head losses with all-ignored targets are NaN; the test simply
@@ -156,21 +158,27 @@ class TestGloeckleForward:
 class TestModelLevelGloeckle:
     def test_model_uses_gloeckle_when_configured(self):
         c = _gloeckle_config(
-            num_hidden_layers=2, hidden_size=32, intermediate_size=64,
-            num_attention_heads=4, num_key_value_heads=4,
+            num_hidden_layers=2,
+            hidden_size=32,
+            intermediate_size=64,
+            num_attention_heads=4,
+            num_key_value_heads=4,
         )
         m = UMichSLMForCausalLM(c)
         assert isinstance(m.mtp, GloeckleMultiTokenPrediction)
         # Each MTP head must be independent of lm_head
         for i, head in enumerate(m.mtp.lm_heads):
-            assert head.weight is not m.lm_head.weight, (
-                f"MTP head {i} aliased to lm_head — should be independent"
-            )
+            assert (
+                head.weight is not m.lm_head.weight
+            ), f"MTP head {i} aliased to lm_head — should be independent"
 
     def test_del_mtp_leaves_lm_head_intact(self):
         c = _gloeckle_config(
-            num_hidden_layers=2, hidden_size=32, intermediate_size=64,
-            num_attention_heads=4, num_key_value_heads=4,
+            num_hidden_layers=2,
+            hidden_size=32,
+            intermediate_size=64,
+            num_attention_heads=4,
+            num_key_value_heads=4,
         )
         m = UMichSLMForCausalLM(c)
         lm_weight_before = m.lm_head.weight.clone()

@@ -1,15 +1,47 @@
+<div align="center">
+
 # UMichSLM
 
-**A modular transformer codebase for studying efficient small language models.**
+**A modular transformer codebase for studying efficient small language models: every architecture choice is one config switch, so experiments stay apples-to-apples.**
+
+The codebase behind the University of Michigan's first small language model, a decoder-only family up to about 1B parameters.
+
+[How it works](#how-it-works) &nbsp;·&nbsp; [Highlights](#highlights) &nbsp;·&nbsp; [Architecture tour](about/architecture-tour.md) &nbsp;·&nbsp; [Setup](SETUP.md)
+
+![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)
+![Hugging Face compatible](https://img.shields.io/badge/Hugging%20Face-compatible-FFD21E?logo=huggingface&logoColor=black)
+![TorchTitan + SLURM](https://img.shields.io/badge/training-TorchTitan%20%2B%20SLURM-informational)
+![License: MIT](https://img.shields.io/badge/license-MIT-2EA44F)
+
+</div>
 
 <!-- sync:banner -->
 > **Snapshot, not the live codebase.** This is a periodically refreshed, reviewed snapshot of the project, taken from upstream commit `59b1552` (2026-11-10). Active development stays in a private repository, so recent work will not appear here.  
 > Last synced: 2026-11-24
 <!-- /sync:banner -->
 
-UMichSLM is a research-grade implementation of a decoder-only language model family (around 1B parameters at the top end) built so that architecture experiments stay apples-to-apples. Attention mechanisms, position embeddings, sparsity strategies, recurrent layers, memory modules and training objectives are all selected through a single `UMichSLMConfig`. Changing one design choice never means forking the model.
+## How it works, in one page
 
-The project was developed by a 15-person team at the University of Michigan.
+- **The problem:** comparing small-model designs fairly is hard when every new attention variant, position scheme or sparsity method means a fork of the model code. Differences in plumbing then hide the differences that matter.
+- **What this is:** one decoder-only model whose every design choice (attention, positions, sparsity, recurrent layers, memory modules, training objectives, layer reuse) is selected through a single `UMichSLMConfig`. Changing one choice never means forking the model.
+- **How it's used:** scaling-law runs pick a design at small sizes before committing GPU budget; the chosen configuration is pretrained, then fine-tuned (SFT, DPO, GRPO) and evaluated on perplexity, bits-per-byte, lm-eval-harness, RAG and agentic tasks.
+
+The project was developed by a 15-person team at the University of Michigan. This repository is a reviewed public snapshot; see [About this repository](#about-this-repository).
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    CFG[UMichSLMConfig<br/>one switch per design choice] --> MODEL[Decoder-only model<br/>SwiGLU, RMSNorm, pre-norm,<br/>Flash Attention 2]
+    MODEL --> SCALE[Scaling-law runs<br/>small sizes first]
+    SCALE --> PRE[Pretraining<br/>TorchTitan, SLURM,<br/>layer stacking]
+    PRE --> POST[SFT, DPO, GRPO]
+    PRE --> EVAL[Evaluation<br/>perplexity, bits-per-byte,<br/>lm-eval-harness, RAG, agentic]
+    POST --> EVAL
+```
 
 ## Highlights
 

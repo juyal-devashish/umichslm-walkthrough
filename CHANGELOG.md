@@ -1,6 +1,6 @@
 # Changelog
 
-Each entry is one snapshot. Revert the matching pull request to roll one back.
+Each entry is one snapshot.
 
 ## 2026-11-24 — snapshot of upstream `59b1552` (2026-11-10)
 

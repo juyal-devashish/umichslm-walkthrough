@@ -80,9 +80,7 @@ docs/                 reference documentation
 
 ## About this repository
 
-This repository is a **reviewed snapshot** of the project, refreshed daily by an automated job. It is intentionally behind the working codebase: each snapshot is taken from a commit at least two weeks old, and active development stays in a private repository. Expect the newest experiments and results to be absent.
-
-Snapshots are curated rather than mirrored. Only an explicit allowlist of files is published, and the job stops without publishing if any safety check fails. Cluster paths, account names, email addresses and similar identifiers are replaced with placeholders such as `/path/to/data`, so some launch scripts need local paths filled in before they run. The sync tooling lives in [`sync/`](sync/README.md). Every snapshot lands as its own pull request, so any one of them can be reverted.
+This repository is a **snapshot** of the project, not the live codebase. Active development stays in a private repository, so the newest work will not appear here. Cluster paths, account names and email addresses have been replaced with placeholders such as `/path/to/data`, so some launch scripts need local paths filled in before they run.
 
 ## License
 
